@@ -37,6 +37,7 @@ from solo.methods.swav import SwAV
 from solo.methods.vibcreg import VIbCReg
 from solo.methods.vicreg import VICReg
 from solo.methods.wmse import WMSE
+from solo.methods.ta import BYOLWithTA
 
 METHODS = {
     # base classes
@@ -61,6 +62,7 @@ METHODS = {
     "vibcreg": VIbCReg,
     "vicreg": VICReg,
     "wmse": WMSE,
+    "byol-ta": BYOLWithTA,
 }
 __all__ = [
     "BarlowTwins",
@@ -83,4 +85,5 @@ __all__ = [
     "VIbCReg",
     "VICReg",
     "WMSE",
+    "BYOLWithTA",
 ]
