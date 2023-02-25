@@ -16,9 +16,9 @@ method: "byol-ta"
 backbone:
   name: "resnet18"
 method_kwargs:
-  proj_hidden_dim: 512
+  proj_hidden_dim: 4096
   proj_output_dim: 256
-  pred_hidden_dim: 512
+  pred_hidden_dim: 4096
 momentum:
   base_tau: 0.99
   final_tau: 1.0
@@ -30,7 +30,7 @@ data:
   num_workers: 4
 optimizer:
   name: "lars"
-  batch_size: 16
+  batch_size: 256
   lr: 1.0
   classifier_lr: 0.1
   weight_decay: 1e-5
@@ -40,17 +40,17 @@ optimizer:
     exclude_bias_n_norm: True
 scheduler:
   name: "warmup_cosine"
-checkpoint:
-  enabled: True
-  dir: "trained_models"
-  frequency: 1
-auto_resume:
-  enabled: True
+# checkpoint:
+#   enabled: True
+#   dir: "trained_models"
+#   frequency: 1
+# auto_resume:
+#   enabled: True
 
 # overwrite PL stuff
 max_epochs: 1000
 devices: [0]
-sync_batchnorm: True
+# sync_batchnorm: True
 accelerator: "gpu"
-strategy: "ddp"
-precision: 16
+# strategy: "ddp"
+precision: 32

@@ -29,11 +29,12 @@ import torch.nn.functional as F
 from solo.losses.byol import byol_loss_func
 from solo.methods.base import BaseMomentumMethod
 from solo.utils.momentum import initialize_momentum_params
+from solo.utils.misc import add_intermediate_layers_hook
 
 
 class BYOLWithTA(BaseMomentumMethod):
     def __init__(self, cfg: omegaconf.DictConfig):
-        """Implements BYOL (https://arxiv.org/abs/2006.07733).
+        """Implements a TA network on top of BYOL
 
         Extra cfg settings:
             method_kwargs:
@@ -93,6 +94,9 @@ class BYOLWithTA(BaseMomentumMethod):
             nn.ReLU(),
             nn.Linear(pred_hidden_dim, proj_output_dim),
         )
+
+        # print("Adding hooks")
+        # add_intermediate_layers_hook(self.backbone)
 
     @staticmethod
     def add_and_assert_specific_cfg(cfg: omegaconf.DictConfig) -> omegaconf.DictConfig:
@@ -210,63 +214,56 @@ class BYOLWithTA(BaseMomentumMethod):
 
         out = super().training_step(batch, batch_idx)
 
-        # out['feats'] has two tensors of size [batch_size, dimension]
-        feats1, feats2 = out["feats"]
-        momentum_feats1, momentum_feats2 = out["momentum_feats"]
+        neg_cos_sim = 0
 
-        # ------- projection -------
-        z1 = self.projector(feats1)
-        z2 = self.projector(feats2)
+        student_z = []
 
-        with torch.no_grad():
-            momentum_z1 = self.momentum_projector(momentum_feats1)
-            momentum_z2 = self.momentum_projector(momentum_feats2)
-        
-        # attention mechanism
-        student_representations = torch.cat([z1, z2])
-        student_queries = self.query_matrix(student_representations)
-        student_keys = self.key_matrix(student_representations)
-        student_values = self.value_matrix(student_representations)
+        for idx1 in range(self.num_large_crops):
+            for idx2 in np.delete(range(self.num_crops), idx1):
+                z = self.projector(out["feats"][idx1])
+                student_z.append(z)
+                with torch.no_grad():
+                    momentum_z = self.momentum_projector(out["momentum_feats"][idx2])
+                student_queries = self.query_matrix(z)
+                student_keys = self.key_matrix(z)
+                student_values = self.value_matrix(z)
 
-        with torch.no_grad():
-            teacher_representations = torch.cat([momentum_z1, momentum_z2])
-            teacher_queries = self.momentum_query_matrix(teacher_representations)
-            teacher_keys = self.momentum_key_matrix(teacher_representations)
-            teacher_values = self.momentum_value_matrix(teacher_representations)
+                with torch.no_grad():
+                    teacher_queries = self.momentum_query_matrix(momentum_z)
+                    teacher_keys = self.momentum_key_matrix(momentum_z)
+                    teacher_values = self.momentum_value_matrix(momentum_z)
 
-        d = student_queries.shape[-1]
-        student_scores = torch.mm(student_queries, torch.cat([student_keys, teacher_keys]).T) / math.sqrt(d)
-        student_attention_weights = torch.nn.functional.softmax(student_scores, dim=-1)
-        student_y = torch.mm(student_attention_weights, torch.cat([student_values, teacher_values]))
-        # calculate y1 and y2 for student
-        student_y = [student_y[:student_y.shape[0]//2], student_y[student_y.shape[0]//2:]]
-        # pass y1 and y2 to the predictor
-        p1, p2 = [self.predictor(y) for y in student_y]
+                key_pool = (
+                    torch.cat([student_keys, teacher_keys.detach()])
+                    .transpose(0, 1)
+                    .contiguous()
+                )
+                value_pool = torch.cat([student_values, teacher_values.detach()])
 
-        with torch.no_grad():
-            teacher_scores = torch.mm(teacher_queries, torch.cat([student_keys, teacher_keys]).T) / math.sqrt(d)
-            teacher_attention_weights = torch.nn.functional.softmax(teacher_scores, dim=-1)
-            teacher_y = torch.mm(teacher_attention_weights, torch.cat([student_values, teacher_values]))
-            teacher_y1, teacher_y2 = teacher_y[:teacher_y.shape[0]//2], teacher_y[teacher_y.shape[0]//2:]
+                d = student_queries.shape[-1]
+                student_weights = torch.nn.functional.softmax(
+                    torch.mm(student_queries, key_pool) / np.sqrt(d),
+                    dim=-1,
+                )
+                # TODO: Check that this is ok
+                student_y = torch.mm(student_weights, value_pool)
+                p = self.predictor(student_y)
+
+                with torch.no_grad():
+                    teacher_weights = torch.nn.functional.softmax(
+                        torch.mm(teacher_queries, key_pool) / np.sqrt(d),
+                        dim=-1,
+                    )
+                    teacher_y = torch.mm(teacher_weights, value_pool)
+
+                neg_cos_sim += byol_loss_func(p, teacher_y)
 
         class_loss = out["loss"]
-        # Z = out["z"]
-        # P = out["p"]
-        # Z_momentum = out["momentum_z"]
-
-        # ------- negative consine similarity loss -------
-        neg_cos_sim = 0
-        neg_cos_sim += byol_loss_func(p1, teacher_y2)
-        neg_cos_sim += byol_loss_func(p2, teacher_y1)
-
-        # for v1 in range(self.num_large_crops):
-        #     for v2 in np.delete(range(self.num_crops), v1):
-        #         neg_cos_sim += byol_loss_func(P[v2], Z_momentum[v1])
 
         # calculate std of features
         with torch.no_grad():
             z_std = (
-                F.normalize(torch.stack(student_y[: self.num_large_crops]), dim=-1)
+                F.normalize(torch.stack(student_z[: self.num_large_crops]), dim=-1)
                 .std(dim=1)
                 .mean()
             )
@@ -275,6 +272,7 @@ class BYOLWithTA(BaseMomentumMethod):
             "train_neg_cos_sim": neg_cos_sim,
             "train_z_std": z_std,
         }
+        print(z_std)
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
 
         return neg_cos_sim + class_loss
