@@ -174,4 +174,8 @@ dmypy.json
 # vim
 *.sw?
 
+# cluster files
+*.out
+*.sbatch
+
 # End of https://www.gitignore.io/api/python,visualstudiocode
