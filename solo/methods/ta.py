@@ -25,6 +25,7 @@ import numpy as np
 import omegaconf
 import torch
 import torch.nn as nn
+
 import torch.nn.functional as F
 from solo.losses.byol import byol_loss_func
 from solo.methods.base import BaseMomentumMethod
@@ -66,6 +67,7 @@ class BYOLWithTA(BaseMomentumMethod):
         )
 
         # TODO: Add multi head attention
+
         # Initialize student TA network parameters
         self.query_matrix = nn.Linear(proj_output_dim, proj_output_dim, bias=False)
         self.key_matrix = nn.Linear(proj_output_dim, proj_output_dim, bias=False)
@@ -150,55 +152,6 @@ class BYOLWithTA(BaseMomentumMethod):
         ]
         return super().momentum_pairs + extra_momentum_pairs
 
-    # def forward(self, X: torch.Tensor) -> Dict[str, Any]:
-    #     """Performs forward pass of the online backbone, projector and predictor.
-
-    #     Args:
-    #         X (torch.Tensor): batch of images in tensor format.
-
-    #     Returns:
-    #         Dict[str, Any]: a dict containing the outputs of the parent and the projected features.
-    #     """
-
-    #     out = super().forward(X)
-    #     z = self.projector(out["feats"])
-    #     p = self.predictor(z)
-    #     out.update({"z": z, "p": p})
-    #     return out
-
-    # def multicrop_forward(self, X: torch.tensor) -> Dict[str, Any]:
-    #     """Performs the forward pass for the multicrop views.
-
-    #     Args:
-    #         X (torch.Tensor): batch of images in tensor format.
-
-    #     Returns:
-    #         Dict[]: a dict containing the outputs of the parent
-    #             and the projected features.
-    #     """
-
-    #     out = super().multicrop_forward(X)
-    #     z = self.projector(out["feats"])
-    #     p = self.predictor(z)
-    #     out.update({"z": z, "p": p})
-    #     return out
-
-    # @torch.no_grad()
-    # def momentum_forward(self, X: torch.Tensor) -> Dict:
-    #     """Performs the forward pass of the momentum backbone and projector.
-
-    #     Args:
-    #         X (torch.Tensor): batch of images in tensor format.
-
-    #     Returns:
-    #         Dict[str, Any]: a dict containing the outputs of
-    #             the parent and the momentum projected features.
-    #     """
-
-    #     out = super().momentum_forward(X)
-    #     z = self.momentum_projector(out["feats"])
-    #     out.update({"z": z})
-    #     return out
 
     def training_step(self, batch: Sequence[Any], batch_idx: int) -> torch.Tensor:
         """Training step for BYOL reusing BaseMethod training step.
@@ -245,7 +198,6 @@ class BYOLWithTA(BaseMomentumMethod):
                     torch.mm(student_queries, key_pool) / np.sqrt(d),
                     dim=-1,
                 )
-                # TODO: Check that this is ok
                 student_y = torch.mm(student_weights, value_pool)
                 p = self.predictor(student_y)
 
