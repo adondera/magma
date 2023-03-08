@@ -1,3 +1,8 @@
+*.txt
+
+# ipynb checkpoints
+.ipynb_checkpoints
+
 # tensorboard dir
 runs/
 
