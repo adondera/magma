@@ -195,18 +195,18 @@ class BYOLWithTA(BaseMomentumMethod):
 
                 d = student_queries.shape[-1]
                 student_weights = torch.nn.functional.softmax(
-                    torch.mm(student_queries, key_pool) / np.sqrt(d),
+                    torch.mm(student_queries, student_keys.transpose(0,1)) / np.sqrt(d),
                     dim=-1,
                 )
-                student_y = torch.mm(student_weights, value_pool)
+                student_y = torch.mm(student_weights, student_values)
                 p = self.predictor(student_y)
 
                 with torch.no_grad():
                     teacher_weights = torch.nn.functional.softmax(
-                        torch.mm(teacher_queries, key_pool) / np.sqrt(d),
+                        torch.mm(teacher_queries, teacher_keys.transpose(0,1)) / np.sqrt(d),
                         dim=-1,
                     )
-                    teacher_y = torch.mm(teacher_weights, value_pool)
+                    teacher_y = torch.mm(teacher_weights, teacher_values)
 
                 neg_cos_sim += byol_loss_func(p, teacher_y)
 

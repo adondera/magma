@@ -22,6 +22,7 @@ import os
 
 import hydra
 import torch
+import wandb
 from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.callbacks import LearningRateMonitor
@@ -247,6 +248,7 @@ def main(cfg: DictConfig):
     except:
         pass
 
+    wandb.run.log_code('.')
     if cfg.data.format == "dali":
         trainer.fit(model, ckpt_path=ckpt_path, datamodule=dali_datamodule)
     else:
