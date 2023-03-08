@@ -11,8 +11,8 @@ hydra:
   run:
     dir: .
 
-name: "simclr-cifar10" # change here for cifar100
-method: "simclr"
+name: "simclr-cifar10-self-attention-single-branch" # change here for cifar100
+method: "simclr-ta"
 backbone:
   name: "resnet18"
 method_kwargs:
@@ -22,7 +22,7 @@ method_kwargs:
 data:
   dataset: cifar10 # change here for cifar100
   train_path: "./datasets"
-  val_path: "datasets/imagenet100/val"
+  val_path: "./datasets"
   format: "image_folder"
   num_workers: 4
 optimizer:
@@ -50,4 +50,4 @@ devices: [0]
 sync_batchnorm: True
 accelerator: "gpu"
 strategy: "ddp"
-precision: 16
+precision: 32
