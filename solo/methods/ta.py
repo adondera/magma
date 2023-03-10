@@ -69,19 +69,31 @@ class BYOLWithTA(BaseMomentumMethod):
         # TODO: Add multi head attention
 
         # Initialize student TA network parameters
-        self.query_matrix = nn.Linear(proj_output_dim, proj_output_dim, bias=False)
-        self.key_matrix = nn.Linear(proj_output_dim, proj_output_dim, bias=False)
-        self.value_matrix = nn.Linear(proj_output_dim, proj_output_dim, bias=False)
+        self.query_matrix = nn.Sequential(
+            nn.Linear(proj_output_dim, proj_output_dim, bias=False),
+            nn.BatchNorm1d(proj_output_dim),
+        )
+        self.key_matrix = nn.Sequential(
+            nn.Linear(proj_output_dim, proj_output_dim, bias=False),
+            nn.BatchNorm1d(proj_output_dim),
+        )
+        self.value_matrix = nn.Sequential(
+            nn.Linear(proj_output_dim, proj_output_dim, bias=False),
+            nn.BatchNorm1d(proj_output_dim),
+        )
 
         # Initialize momentum teacher TA network parameters
-        self.momentum_query_matrix = nn.Linear(
-            proj_output_dim, proj_output_dim, bias=False
+        self.momentum_query_matrix = nn.Sequential(
+            nn.Linear(proj_output_dim, proj_output_dim, bias=False),
+            nn.BatchNorm1d(proj_output_dim),
         )
-        self.momentum_key_matrix = nn.Linear(
-            proj_output_dim, proj_output_dim, bias=False
+        self.momentum_key_matrix = nn.Sequential(
+            nn.Linear(proj_output_dim, proj_output_dim, bias=False),
+            nn.BatchNorm1d(proj_output_dim),
         )
-        self.momentum_value_matrix = nn.Linear(
-            proj_output_dim, proj_output_dim, bias=False
+        self.momentum_value_matrix = nn.Sequential(
+            nn.Linear(proj_output_dim, proj_output_dim, bias=False),
+            nn.BatchNorm1d(proj_output_dim),
         )
 
         initialize_momentum_params(self.projector, self.momentum_projector)
@@ -169,12 +181,11 @@ class BYOLWithTA(BaseMomentumMethod):
 
         neg_cos_sim = 0
 
-        student_z = []
+        ta_output = []
 
         for idx1 in range(self.num_large_crops):
             for idx2 in np.delete(range(self.num_crops), idx1):
                 z = self.projector(out["feats"][idx1])
-                student_z.append(z)
                 with torch.no_grad():
                     momentum_z = self.momentum_projector(out["momentum_feats"][idx2])
                 student_queries = self.query_matrix(z)
@@ -195,18 +206,19 @@ class BYOLWithTA(BaseMomentumMethod):
 
                 d = student_queries.shape[-1]
                 student_weights = torch.nn.functional.softmax(
-                    torch.mm(student_queries, student_keys.transpose(0,1)) / np.sqrt(d),
+                    torch.mm(student_queries, key_pool) / np.sqrt(d),
                     dim=-1,
                 )
-                student_y = torch.mm(student_weights, student_values)
+                student_y = torch.mm(student_weights, value_pool)
+                ta_output.append(student_y)
                 p = self.predictor(student_y)
 
                 with torch.no_grad():
                     teacher_weights = torch.nn.functional.softmax(
-                        torch.mm(teacher_queries, teacher_keys.transpose(0,1)) / np.sqrt(d),
+                        torch.mm(teacher_queries, key_pool) / np.sqrt(d),
                         dim=-1,
                     )
-                    teacher_y = torch.mm(teacher_weights, teacher_values)
+                    teacher_y = torch.mm(teacher_weights, value_pool)
 
                 neg_cos_sim += byol_loss_func(p, teacher_y)
 
@@ -215,7 +227,7 @@ class BYOLWithTA(BaseMomentumMethod):
         # calculate std of features
         with torch.no_grad():
             z_std = (
-                F.normalize(torch.stack(student_z[: self.num_large_crops]), dim=-1)
+                F.normalize(torch.stack(ta_output[: self.num_large_crops]), dim=-1)
                 .std(dim=1)
                 .mean()
             )
