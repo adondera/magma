@@ -72,28 +72,34 @@ class BYOLWithTA(BaseMomentumMethod):
         self.query_matrix = nn.Sequential(
             nn.Linear(proj_output_dim, proj_output_dim, bias=False),
             nn.BatchNorm1d(proj_output_dim),
+            nn.ReLU(),
         )
         self.key_matrix = nn.Sequential(
             nn.Linear(proj_output_dim, proj_output_dim, bias=False),
             nn.BatchNorm1d(proj_output_dim),
+            nn.ReLU(),
         )
         self.value_matrix = nn.Sequential(
             nn.Linear(proj_output_dim, proj_output_dim, bias=False),
             nn.BatchNorm1d(proj_output_dim),
+            nn.ReLU(),
         )
 
         # Initialize momentum teacher TA network parameters
         self.momentum_query_matrix = nn.Sequential(
             nn.Linear(proj_output_dim, proj_output_dim, bias=False),
             nn.BatchNorm1d(proj_output_dim),
+            nn.ReLU(),
         )
         self.momentum_key_matrix = nn.Sequential(
             nn.Linear(proj_output_dim, proj_output_dim, bias=False),
             nn.BatchNorm1d(proj_output_dim),
+            nn.ReLU(),
         )
         self.momentum_value_matrix = nn.Sequential(
             nn.Linear(proj_output_dim, proj_output_dim, bias=False),
             nn.BatchNorm1d(proj_output_dim),
+            nn.ReLU(),
         )
 
         initialize_momentum_params(self.projector, self.momentum_projector)
