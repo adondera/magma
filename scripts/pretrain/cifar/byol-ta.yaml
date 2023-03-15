@@ -11,7 +11,7 @@ hydra:
   run:
     dir: .
 
-name: "byol-ta-cifar10-adamw-256batch" # change here for cifar100
+name: "byol-ta-cifar10-both-branch-adamw-residual-mixed-precision-256batch" # change here for cifar100
 method: "byol-ta"
 backbone:
   name: "resnet18"
@@ -30,7 +30,7 @@ data:
   num_workers: 4
 optimizer:
   name: "adamw"
-  batch_size: 512
+  batch_size: 256
   lr: 2.0e-4
   classifier_lr: 2.0e-4
   weight_decay: 0.05
@@ -51,4 +51,4 @@ devices: [0]
 sync_batchnorm: True
 accelerator: "gpu"
 strategy: "ddp"
-precision: 32
+precision: 16
