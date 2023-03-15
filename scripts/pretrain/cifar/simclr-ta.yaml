@@ -11,7 +11,7 @@ hydra:
   run:
     dir: .
 
-name: "simclr-cifar10-self-attention-single-branch" # change here for cifar100
+name: "simclr-cifar10-self-attention-both-branch" # change here for cifar100
 method: "simclr-ta"
 backbone:
   name: "resnet18"
@@ -26,23 +26,21 @@ data:
   format: "image_folder"
   num_workers: 4
 optimizer:
-  name: "lars"
+  name: "adamw"
   batch_size: 256
-  lr: 0.4
-  classifier_lr: 0.1
-  weight_decay: 1e-4
+  lr: 2.0e-4
+  classifier_lr: 2.0e-4
+  weight_decay: 0.05
   kwargs:
-    clip_lr: True
-    eta: 0.02
-    exclude_bias_n_norm: True
+    betas: [0.9, 0.95]
 scheduler:
   name: "warmup_cosine"
 checkpoint:
   enabled: True
   dir: "trained_models"
   frequency: 1
-auto_resume:
-  enabled: True
+# auto_resume:
+#   enabled: True
 
 # overwrite PL stuff
 max_epochs: 1000

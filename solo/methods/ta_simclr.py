@@ -100,16 +100,7 @@ class TA_SimCLR(BaseMethod):
 
         out = super().forward(X)
         z = self.projector(out["feats"])
-        queries = self.query_matrix(z)
-        keys = self.key_matrix(z)
-        values = self.value_matrix(z)
-        d = queries.shape[-1]
-        weights = torch.nn.functional.softmax(
-            torch.mm(queries, keys.transpose(0, 1)) / (d ** 0.5), dim=-1
-        )
-        y = torch.mm(weights, values)
         out.update({"z": z})
-        out.update({"y": y})
         return out
 
     def multicrop_forward(self, X: torch.tensor) -> Dict[str, Any]:
@@ -125,16 +116,7 @@ class TA_SimCLR(BaseMethod):
 
         out = super().multicrop_forward(X)
         z = self.projector(out["feats"])
-        queries = self.query_matrix(z)
-        keys = self.key_matrix(z)
-        values = self.value_matrix(z)
-        d = queries.shape[-1]
-        weights = torch.nn.functional.softmax(
-            torch.mm(queries, keys.transpose(0, 1)) / (d ** 0.5), dim=-1
-        )
-        y = torch.mm(weights, values)
         out.update({"z": z})
-        out.update({"y": y})
         return out
 
     def training_step(self, batch: Sequence[Any], batch_idx: int) -> torch.Tensor:
@@ -153,14 +135,22 @@ class TA_SimCLR(BaseMethod):
 
         out = super().training_step(batch, batch_idx)
         class_loss = out["loss"]
-        z = torch.cat(out["y"])
+        z = torch.cat(out["z"])
+        queries = self.query_matrix(z)
+        keys = self.key_matrix(z)
+        values = self.value_matrix(z)
+        d = queries.shape[-1]
+        weights = torch.nn.functional.softmax(
+            torch.mm(queries, keys.transpose(0, 1)) / (d ** 0.5), dim=-1
+        )
+        y = torch.mm(weights, values)
 
         # ------- contrastive loss -------
         n_augs = self.num_large_crops + self.num_small_crops
         indexes = indexes.repeat(n_augs)
 
         nce_loss = simclr_loss_func(
-            z,
+            y,
             indexes=indexes,
             temperature=self.temperature,
         )
