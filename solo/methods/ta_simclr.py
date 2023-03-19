@@ -22,8 +22,10 @@ from typing import Any, Dict, List, Sequence
 import omegaconf
 import torch
 import torch.nn as nn
+import torch.functional as F
 from solo.losses.simclr import simclr_loss_func
 from solo.methods.base import BaseMethod
+from solo.utils.ta_attention import TA_Attention
 
 
 class TA_SimCLR(BaseMethod):
@@ -43,6 +45,13 @@ class TA_SimCLR(BaseMethod):
 
         proj_hidden_dim: int = cfg.method_kwargs.proj_hidden_dim
         proj_output_dim: int = cfg.method_kwargs.proj_output_dim
+        num_heads: int = cfg.method_kwargs.num_heads
+        attn_dropout = cfg.method_kwargs.attn_dropout
+        proj_dropout = cfg.method_kwargs.proj_dropout
+
+        assert (
+            proj_output_dim % num_heads == 0
+        ), "proj_output_dim must be divisible by num_heads"
 
         # projector
         self.projector = nn.Sequential(
@@ -51,10 +60,7 @@ class TA_SimCLR(BaseMethod):
             nn.Linear(proj_hidden_dim, proj_output_dim),
         )
 
-        self.query_matrix = nn.Linear(proj_output_dim, proj_output_dim, bias=False)
-        self.key_matrix = nn.Linear(proj_output_dim, proj_output_dim, bias=False)
-        self.value_matrix = nn.Linear(proj_output_dim, proj_output_dim, bias=False)
-        
+        self.ta = TA_Attention(proj_output_dim, num_heads, attn_dropout, proj_dropout)
 
     @staticmethod
     def add_and_assert_specific_cfg(cfg: omegaconf.DictConfig) -> omegaconf.DictConfig:
@@ -72,6 +78,9 @@ class TA_SimCLR(BaseMethod):
         assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.proj_output_dim")
         assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.proj_hidden_dim")
         assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.temperature")
+        assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.num_heads")
+        assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.attn_dropout")
+        assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.proj_dropout")
 
         return cfg
 
@@ -83,7 +92,10 @@ class TA_SimCLR(BaseMethod):
             List[dict]: list of learnable parameters.
         """
 
-        extra_learnable_params = [{"name": "projector", "params": self.projector.parameters()}]
+        extra_learnable_params = [
+            {"name": "projector", "params": self.projector.parameters()},
+            {"name": "ta", "params": self.ta.parameters()},
+        ]
         return super().learnable_params + extra_learnable_params
 
     def forward(self, X: torch.tensor) -> Dict[str, Any]:
@@ -136,25 +148,34 @@ class TA_SimCLR(BaseMethod):
         out = super().training_step(batch, batch_idx)
         class_loss = out["loss"]
         z = torch.cat(out["z"])
-        queries = self.query_matrix(z)
-        keys = self.key_matrix(z)
-        values = self.value_matrix(z)
-        d = queries.shape[-1]
-        weights = torch.nn.functional.softmax(
-            torch.mm(queries, keys.transpose(0, 1)) / (d ** 0.5), dim=-1
-        )
-        y = torch.mm(weights, values)
+        queries, keys, values = self.ta(z)
+        residual = self.ta.attention(queries, keys, values)
+        z = z + residual
 
         # ------- contrastive loss -------
         n_augs = self.num_large_crops + self.num_small_crops
         indexes = indexes.repeat(n_augs)
 
         nce_loss = simclr_loss_func(
-            y,
+            z,
             indexes=indexes,
             temperature=self.temperature,
         )
 
-        self.log("train_nce_loss", nce_loss, on_epoch=True, sync_dist=True)
+        with torch.no_grad():
+            residual_std = F.normalize(residual, dim=-1).std(dim=1).mean()
+            unnormalized_residual_std = residual.std(dim=1).mean()
+            z_std = F.normalize(z, dim=-1).std(dim=1).mean()
+            unnormalized_z_std = z.std(dim=1).mean()
+
+        metrics = {
+            "train_nce_loss": nce_loss,
+            "train_residual_std": residual_std,
+            "train_residual_unnormalized_std": unnormalized_residual_std,
+            "train_z_std": z_std,
+            "train_z_unnormalized_std": unnormalized_z_std,
+        }
+
+        self.log_dict(metrics, on_epoch=True, sync_dist=True)
 
         return nce_loss + class_loss

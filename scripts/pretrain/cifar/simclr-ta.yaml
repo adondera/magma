@@ -11,7 +11,7 @@ hydra:
   run:
     dir: .
 
-name: "simclr-cifar10-self-attention-both-branch" # change here for cifar100
+name: "simclr-cifar10-both-branch-residual-BN-4head" # change here for cifar100
 method: "simclr-ta"
 backbone:
   name: "resnet18"
@@ -19,6 +19,9 @@ method_kwargs:
   proj_hidden_dim: 2048
   proj_output_dim: 256
   temperature: 0.2
+  num_heads: 4
+  attn_dropout: 0
+  proj_dropout: 0
 data:
   dataset: cifar10 # change here for cifar100
   train_path: "./datasets"
