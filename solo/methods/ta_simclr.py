@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Sequence
 import omegaconf
 import torch
 import torch.nn as nn
-import torch.functional as F
+import torch.nn.functional as F
 from solo.losses.simclr import simclr_loss_func
 from solo.methods.base import BaseMethod
 from solo.utils.ta_attention import TA_Attention
