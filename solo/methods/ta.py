@@ -170,7 +170,6 @@ class BYOLWithTA(BaseMomentumMethod):
         ]
         return super().momentum_pairs + extra_momentum_pairs
 
-
     def training_step(self, batch: Sequence[Any], batch_idx: int) -> torch.Tensor:
         """Training step for BYOL reusing BaseMethod training step.
 
@@ -188,6 +187,7 @@ class BYOLWithTA(BaseMomentumMethod):
         neg_cos_sim = 0
 
         ta_output = []
+        residuals = []
 
         for idx1 in range(self.num_large_crops):
             for idx2 in np.delete(range(self.num_crops), idx1):
@@ -215,8 +215,12 @@ class BYOLWithTA(BaseMomentumMethod):
                     torch.mm(student_queries, key_pool) / math.sqrt(d),
                     dim=-1,
                 )
-                student_y = z + torch.mm(student_weights, value_pool)
+                residual = torch.mm(student_weights, value_pool)
+                student_y = z + residual
+
                 ta_output.append(student_y)
+                residuals.append(residual)
+
                 p = self.predictor(student_y)
 
                 with torch.no_grad():
@@ -232,15 +236,25 @@ class BYOLWithTA(BaseMomentumMethod):
 
         # calculate std of features
         with torch.no_grad():
-            z_std = (
+            z_normalized_std = (
                 F.normalize(torch.stack(ta_output[: self.num_large_crops]), dim=-1)
+                .std(dim=1)
+                .mean()
+            )
+            z_std = torch.stack(ta_output[: self.num_large_crops]).std(dim=1).mean()
+            residual_std = torch.stack(residuals).std(dim=1).mean()
+            residual_normalized_std = (
+                F.normalize(torch.stack(residuals[: self.num_large_crops]), dim=-1)
                 .std(dim=1)
                 .mean()
             )
 
         metrics = {
             "train_neg_cos_sim": neg_cos_sim,
+            "train_z_normalized_std": z_normalized_std,
             "train_z_std": z_std,
+            "train_residual_std": residual_std,
+            "train_residual_normalized_std": residual_normalized_std,
         }
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
 
