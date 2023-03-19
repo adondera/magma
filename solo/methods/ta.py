@@ -20,7 +20,6 @@
 
 from typing import Any, Dict, List, Sequence, Tuple
 
-import math
 import numpy as np
 import omegaconf
 import torch
@@ -31,6 +30,7 @@ from solo.losses.byol import byol_loss_func
 from solo.methods.base import BaseMomentumMethod
 from solo.utils.momentum import initialize_momentum_params
 from solo.utils.misc import add_intermediate_layers_hook
+from solo.utils.ta_attention import TA_Attention
 
 
 class BYOLWithTA(BaseMomentumMethod):
@@ -49,6 +49,13 @@ class BYOLWithTA(BaseMomentumMethod):
         proj_hidden_dim: int = cfg.method_kwargs.proj_hidden_dim
         proj_output_dim: int = cfg.method_kwargs.proj_output_dim
         pred_hidden_dim: int = cfg.method_kwargs.pred_hidden_dim
+        num_heads: int = cfg.method_kwargs.num_heads
+        attn_dropout = cfg.method_kwargs.attn_dropout
+        proj_dropout = cfg.method_kwargs.proj_dropout
+
+        assert (
+            proj_output_dim % num_heads == 0
+        ), "proj_output_dim must be divisible by num_heads"
 
         # projector
         self.projector = nn.Sequential(
@@ -66,46 +73,21 @@ class BYOLWithTA(BaseMomentumMethod):
             nn.Linear(proj_hidden_dim, proj_output_dim),
         )
 
-        # TODO: Add multi head attention
-
-        # Initialize student TA network parameters
-        self.query_matrix = nn.Sequential(
-            nn.Linear(proj_output_dim, proj_output_dim, bias=False),
-            nn.BatchNorm1d(proj_output_dim),
-            nn.ReLU(),
+        self.student_TA = TA_Attention(
+            proj_output_dim,
+            num_heads=num_heads,
+            attn_dropout=attn_dropout,
+            proj_dropout=proj_dropout,
         )
-        self.key_matrix = nn.Sequential(
-            nn.Linear(proj_output_dim, proj_output_dim, bias=False),
-            nn.BatchNorm1d(proj_output_dim),
-            nn.ReLU(),
-        )
-        self.value_matrix = nn.Sequential(
-            nn.Linear(proj_output_dim, proj_output_dim, bias=False),
-            nn.BatchNorm1d(proj_output_dim),
-            nn.ReLU(),
-        )
-
-        # Initialize momentum teacher TA network parameters
-        self.momentum_query_matrix = nn.Sequential(
-            nn.Linear(proj_output_dim, proj_output_dim, bias=False),
-            nn.BatchNorm1d(proj_output_dim),
-            nn.ReLU(),
-        )
-        self.momentum_key_matrix = nn.Sequential(
-            nn.Linear(proj_output_dim, proj_output_dim, bias=False),
-            nn.BatchNorm1d(proj_output_dim),
-            nn.ReLU(),
-        )
-        self.momentum_value_matrix = nn.Sequential(
-            nn.Linear(proj_output_dim, proj_output_dim, bias=False),
-            nn.BatchNorm1d(proj_output_dim),
-            nn.ReLU(),
+        self.teacher_TA = TA_Attention(
+            proj_output_dim,
+            num_heads=num_heads,
+            attn_dropout=attn_dropout,
+            proj_dropout=proj_dropout,
         )
 
         initialize_momentum_params(self.projector, self.momentum_projector)
-        initialize_momentum_params(self.query_matrix, self.momentum_query_matrix)
-        initialize_momentum_params(self.key_matrix, self.momentum_key_matrix)
-        initialize_momentum_params(self.value_matrix, self.momentum_value_matrix)
+        initialize_momentum_params(self.student_TA, self.teacher_TA)
 
         # predictor
         self.predictor = nn.Sequential(
@@ -134,6 +116,9 @@ class BYOLWithTA(BaseMomentumMethod):
         assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.proj_hidden_dim")
         assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.proj_output_dim")
         assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.pred_hidden_dim")
+        assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.num_heads")
+        assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.attn_dropout")
+        assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.proj_dropout")
 
         return cfg
 
@@ -148,9 +133,7 @@ class BYOLWithTA(BaseMomentumMethod):
         extra_learnable_params = [
             {"name": "projector", "params": self.projector.parameters()},
             {"name": "predictor", "params": self.predictor.parameters()},
-            {"name": "query_matrix", "params": self.query_matrix.parameters()},
-            {"name": "key_matrix", "params": self.key_matrix.parameters()},
-            {"name": "value_matrix", "params": self.value_matrix.parameters()},
+            {"name": "student_TA", "params": self.student_TA.parameters()},
         ]
         return super().learnable_params + extra_learnable_params
 
@@ -164,9 +147,7 @@ class BYOLWithTA(BaseMomentumMethod):
 
         extra_momentum_pairs = [
             (self.projector, self.momentum_projector),
-            (self.query_matrix, self.momentum_query_matrix),
-            (self.key_matrix, self.momentum_key_matrix),
-            (self.value_matrix, self.momentum_value_matrix),
+            (self.student_TA, self.teacher_TA),
         ]
         return super().momentum_pairs + extra_momentum_pairs
 
@@ -194,41 +175,30 @@ class BYOLWithTA(BaseMomentumMethod):
                 z = self.projector(out["feats"][idx1])
                 with torch.no_grad():
                     momentum_z = self.momentum_projector(out["momentum_feats"][idx2])
-                student_queries = self.query_matrix(z)
-                student_keys = self.key_matrix(z)
-                student_values = self.value_matrix(z)
+
+                student_q, student_k, student_v = self.student_TA(z)
 
                 with torch.no_grad():
-                    teacher_queries = self.momentum_query_matrix(momentum_z)
-                    teacher_keys = self.momentum_key_matrix(momentum_z)
-                    teacher_values = self.momentum_value_matrix(momentum_z)
+                    teacher_q, teacher_k, teacher_v = self.teacher_TA(momentum_z)
 
-                key_pool = (
-                    torch.cat([student_keys, teacher_keys.detach()])
-                    .transpose(0, 1)
-                    .contiguous()
-                )
-                value_pool = torch.cat([student_values, teacher_values.detach()])
+                key_pool = torch.cat([student_k, teacher_k.detach()], dim=1)
+                value_pool = torch.cat([student_v, teacher_v.detach()], dim=1)
 
-                d = student_queries.shape[-1]
-                student_weights = torch.nn.functional.softmax(
-                    torch.mm(student_queries, key_pool) / math.sqrt(d),
-                    dim=-1,
+                student_ta_output = self.student_TA.attention(
+                    student_q, key_pool, value_pool
                 )
-                residual = torch.mm(student_weights, value_pool)
-                student_y = z + residual
+                student_y = z + student_ta_output
 
                 ta_output.append(student_y)
-                residuals.append(residual)
+                residuals.append(student_ta_output)
 
                 p = self.predictor(student_y)
 
                 with torch.no_grad():
-                    teacher_weights = torch.nn.functional.softmax(
-                        torch.mm(teacher_queries, key_pool) / math.sqrt(d),
-                        dim=-1,
+                    teacher_ta_output = self.teacher_TA.attention(
+                        teacher_q, key_pool, value_pool
                     )
-                    teacher_y = momentum_z + torch.mm(teacher_weights, value_pool)
+                    teacher_y = momentum_z + teacher_ta_output
 
                 neg_cos_sim += byol_loss_func(p, teacher_y)
 
@@ -236,14 +206,16 @@ class BYOLWithTA(BaseMomentumMethod):
 
         # calculate std of features
         with torch.no_grad():
-            z_normalized_std = (
+            z_std = (
                 F.normalize(torch.stack(ta_output[: self.num_large_crops]), dim=-1)
                 .std(dim=1)
                 .mean()
             )
-            z_std = torch.stack(ta_output[: self.num_large_crops]).std(dim=1).mean()
-            residual_std = torch.stack(residuals).std(dim=1).mean()
-            residual_normalized_std = (
+            z_unnormalized_std = (
+                torch.stack(ta_output[: self.num_large_crops]).std(dim=1).mean()
+            )
+            residual_unnormalized_std = torch.stack(residuals).std(dim=1).mean()
+            residual_std = (
                 F.normalize(torch.stack(residuals[: self.num_large_crops]), dim=-1)
                 .std(dim=1)
                 .mean()
@@ -251,10 +223,10 @@ class BYOLWithTA(BaseMomentumMethod):
 
         metrics = {
             "train_neg_cos_sim": neg_cos_sim,
-            "train_z_normalized_std": z_normalized_std,
+            "train_z_unnormalized_std": z_unnormalized_std,
             "train_z_std": z_std,
             "train_residual_std": residual_std,
-            "train_residual_normalized_std": residual_normalized_std,
+            "train_residual_unnormalized_std": residual_unnormalized_std,
         }
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
 
