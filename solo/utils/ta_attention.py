@@ -15,7 +15,10 @@ class TA_Attention(nn.Module):
 
         # Input dim?
         self.qkv_transform = nn.Sequential(
-            nn.Linear(dim, dim * 3, bias=bias),
+            nn.Linear(dim, dim // 2, bias=bias),
+            nn.BatchNorm1d(dim // 2),
+            nn.ReLU(),
+            nn.Linear(dim // 2, dim * 3, bias=bias),
             nn.BatchNorm1d(dim * 3),
             nn.ReLU()
         )
@@ -25,6 +28,13 @@ class TA_Attention(nn.Module):
             nn.BatchNorm1d(dim),
             nn.ReLU())
         self.proj_dropout = nn.Dropout(proj_dropout)
+        # self.ffn = nn.Sequential(
+        #     nn.Linear(dim, dim // 2),
+        #     nn.ReLU(),
+        #     nn.Linear(dim // 2, dim),
+        #     nn.BatchNorm1d(dim),
+        #     nn.ReLU(),
+        # )
 
     # X has shape [B, D]
     def forward(self, x):
@@ -46,5 +56,7 @@ class TA_Attention(nn.Module):
         out = out.transpose(0, 1).reshape(batch_size, self.num_heads * self.head_dim)
         out = self.proj(out)
         out = self.proj_dropout(out)
+
+        # out = out + self.ffn(out)
 
         return out

@@ -29,7 +29,7 @@ import torch.nn.functional as F
 from solo.losses.byol import byol_loss_func
 from solo.methods.base import BaseMomentumMethod
 from solo.utils.momentum import initialize_momentum_params
-from solo.utils.misc import add_intermediate_layers_hook
+from solo.utils.misc import add_intermediate_layers_hook, omegaconf_select
 from solo.utils.ta_attention import TA_Attention
 
 
@@ -52,6 +52,7 @@ class BYOLWithTA(BaseMomentumMethod):
         num_heads: int = cfg.method_kwargs.num_heads
         attn_dropout = cfg.method_kwargs.attn_dropout
         proj_dropout = cfg.method_kwargs.proj_dropout
+        self.ta_lr = cfg.optimizer.ta_lr
 
         assert (
             proj_output_dim % num_heads == 0
@@ -120,6 +121,8 @@ class BYOLWithTA(BaseMomentumMethod):
         assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.attn_dropout")
         assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.proj_dropout")
 
+        cfg.optimizer.ta_lr = omegaconf_select(cfg, "optimizer.ta_lr", cfg.optimizer.lr)
+
         return cfg
 
     @property
@@ -133,7 +136,7 @@ class BYOLWithTA(BaseMomentumMethod):
         extra_learnable_params = [
             {"name": "projector", "params": self.projector.parameters()},
             {"name": "predictor", "params": self.predictor.parameters()},
-            {"name": "student_TA", "params": self.student_TA.parameters()},
+            {"name": "student_TA", "params": self.student_TA.parameters(), "lr": self.ta_lr},
         ]
         return super().learnable_params + extra_learnable_params
 
@@ -187,7 +190,7 @@ class BYOLWithTA(BaseMomentumMethod):
                 student_ta_output = self.student_TA.attention(
                     student_q, key_pool, value_pool
                 )
-                student_y = z + student_ta_output
+                student_y = student_ta_output
 
                 ta_output.append(student_y)
                 residuals.append(student_ta_output)
@@ -198,7 +201,7 @@ class BYOLWithTA(BaseMomentumMethod):
                     teacher_ta_output = self.teacher_TA.attention(
                         teacher_q, key_pool, value_pool
                     )
-                    teacher_y = momentum_z + teacher_ta_output
+                    teacher_y = teacher_ta_output
 
                 neg_cos_sim += byol_loss_func(p, teacher_y)
 
