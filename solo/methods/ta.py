@@ -172,6 +172,7 @@ class BYOLWithTA(BaseMomentumMethod):
 
         ta_output = []
         residuals = []
+        attention_weights = []
 
         for idx1 in range(self.num_large_crops):
             for idx2 in np.delete(range(self.num_crops), idx1):
@@ -187,18 +188,19 @@ class BYOLWithTA(BaseMomentumMethod):
                 key_pool = torch.cat([student_k, teacher_k.detach()], dim=1)
                 value_pool = torch.cat([student_v, teacher_v.detach()], dim=1)
 
-                student_ta_output = self.student_TA.attention(
+                student_ta_output, student_attention_weights = self.student_TA.attention(
                     student_q, key_pool, value_pool
                 )
                 student_y = student_ta_output
 
                 ta_output.append(student_y)
                 residuals.append(student_ta_output)
+                attention_weights.append(student_attention_weights)
 
                 p = self.predictor(student_y)
 
                 with torch.no_grad():
-                    teacher_ta_output = self.teacher_TA.attention(
+                    teacher_ta_output, _ = self.teacher_TA.attention(
                         teacher_q, key_pool, value_pool
                     )
                     teacher_y = teacher_ta_output
@@ -223,6 +225,7 @@ class BYOLWithTA(BaseMomentumMethod):
                 .std(dim=1)
                 .mean()
             )
+            attention_entropy = torch.special.entr(torch.stack(attention_weights)).sum(dim=-1).mean()
 
         metrics = {
             "train_neg_cos_sim": neg_cos_sim,
@@ -230,6 +233,7 @@ class BYOLWithTA(BaseMomentumMethod):
             "train_z_std": z_std,
             "train_residual_std": residual_std,
             "train_residual_unnormalized_std": residual_unnormalized_std,
+            "attention_entropy": attention_entropy,
         }
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
 

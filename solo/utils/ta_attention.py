@@ -50,13 +50,12 @@ class TA_Attention(nn.Module):
         _, batch_size, _ = q.shape
         attn_weights = torch.matmul(q, k.transpose(-2, -1)).contiguous() / math.sqrt(self.head_dim)
         attn_weights = attn_weights.softmax(dim=-1)
-        attn_weights = self.attn_dropout(attn_weights)
 
-        out = torch.matmul(attn_weights, v)
+        out = torch.matmul(self.attn_dropout(attn_weights), v)
         out = out.transpose(0, 1).reshape(batch_size, self.num_heads * self.head_dim)
         out = self.proj(out)
         out = self.proj_dropout(out)
 
         # out = out + self.ffn(out)
 
-        return out
+        return out, attn_weights
