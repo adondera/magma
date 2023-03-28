@@ -226,6 +226,8 @@ class BYOLWithTA(BaseMomentumMethod):
                 .mean()
             )
             attention_entropy = torch.special.entr(torch.stack(attention_weights)).sum(dim=-1).mean()
+            residual_svd_entropy = torch.special.entr(F.normalize(torch.stack(residuals), dim=1, p=1.0)).sum(dim=1).mean()
+            ta_svd_entropy = torch.special.entr(F.normalize(torch.stack(ta_output), dim=1, p=1.0)).sum(dim=1).mean()
 
         metrics = {
             "train_neg_cos_sim": neg_cos_sim,
@@ -234,6 +236,8 @@ class BYOLWithTA(BaseMomentumMethod):
             "train_residual_std": residual_std,
             "train_residual_unnormalized_std": residual_unnormalized_std,
             "attention_entropy": attention_entropy,
+            "residual_svd_entropy": residual_svd_entropy,
+            "ta_svd_entropy": ta_svd_entropy,
         }
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
 
