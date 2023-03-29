@@ -11,7 +11,7 @@ hydra:
   run:
     dir: .
 
-name: "byol-ta-cifar10-contractive-no-residual-4head-0.5-dropout-different-learning-rates" # change here for cifar100
+name: "byol-ta-cifar10-no-residual-4head-0.5-dropout-4096-qkv-hiddenDim" # change here for cifar100
 method: "byol-ta"
 backbone:
   name: "resnet18"
@@ -22,6 +22,7 @@ method_kwargs:
   num_heads: 4
   attn_dropout: 0.5
   proj_dropout: 0.0
+  qkv_hidden_dim: 4096
 momentum:
   base_tau: 0.99
   final_tau: 1.0
@@ -36,7 +37,7 @@ optimizer:
   batch_size: 256
   lr: 1.0e-4
   classifier_lr: 1.0e-3
-  ta_lr: 1.0e-3
+  ta_lr: 1.0e-4
   weight_decay: 0.01
   kwargs:
     betas: [0.9, 0.999]

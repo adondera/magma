@@ -52,6 +52,8 @@ class BYOLWithTA(BaseMomentumMethod):
         num_heads: int = cfg.method_kwargs.num_heads
         attn_dropout = cfg.method_kwargs.attn_dropout
         proj_dropout = cfg.method_kwargs.proj_dropout
+        qkv_hidden_dim = cfg.method_kwargs.qkv_hidden_dim
+
         self.ta_lr = cfg.optimizer.ta_lr
 
         assert (
@@ -75,16 +77,18 @@ class BYOLWithTA(BaseMomentumMethod):
         )
 
         self.student_TA = TA_Attention(
-            proj_output_dim,
-            num_heads=num_heads,
-            attn_dropout=attn_dropout,
-            proj_dropout=proj_dropout,
+            dim = proj_output_dim,
+            num_heads = num_heads,
+            attn_dropout = attn_dropout,
+            proj_dropout = proj_dropout,
+            qkv_hidden_dim = qkv_hidden_dim,
         )
         self.teacher_TA = TA_Attention(
-            proj_output_dim,
-            num_heads=num_heads,
-            attn_dropout=attn_dropout,
-            proj_dropout=proj_dropout,
+            dim = proj_output_dim,
+            num_heads = num_heads,
+            attn_dropout = attn_dropout,
+            proj_dropout = proj_dropout,
+            qkv_hidden_dim = qkv_hidden_dim,
         )
 
         initialize_momentum_params(self.projector, self.momentum_projector)
@@ -122,6 +126,7 @@ class BYOLWithTA(BaseMomentumMethod):
         assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.proj_dropout")
 
         cfg.optimizer.ta_lr = omegaconf_select(cfg, "optimizer.ta_lr", cfg.optimizer.lr)
+        cfg.method_kwargs.qkv_hidden_dim = omegaconf_select(cfg, "method_kwargs.qkv_hidden_dim", None)
 
         return cfg
 

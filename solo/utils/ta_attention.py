@@ -5,7 +5,13 @@ import torch.nn as nn
 
 class TA_Attention(nn.Module):
     def __init__(
-        self, dim, num_heads=1, bias=False, attn_dropout=0.0, proj_dropout=0.0
+        self,
+        dim,
+        num_heads=1,
+        bias=False,
+        attn_dropout=0.0,
+        proj_dropout=0.0,
+        qkv_hidden_dim=None,
     ):
         super().__init__()
         assert dim % num_heads == 0, "dim must be divisible by num_heads"
@@ -14,19 +20,22 @@ class TA_Attention(nn.Module):
         self.d = math.sqrt(self.head_dim)
 
         # Input dim?
-        self.qkv_transform = nn.Sequential(
-            nn.Linear(dim, dim // 2, bias=bias),
-            nn.BatchNorm1d(dim // 2),
-            nn.ReLU(),
-            nn.Linear(dim // 2, dim * 3, bias=bias),
-            nn.BatchNorm1d(dim * 3),
-            nn.ReLU()
+        self.qkv_transform = (
+            nn.Sequential(
+                nn.Linear(dim, qkv_hidden_dim, bias=bias),
+                nn.BatchNorm1d(qkv_hidden_dim),
+                nn.ReLU(),
+                nn.Linear(qkv_hidden_dim, dim * 3, bias=bias),
+                nn.BatchNorm1d(dim * 3),
+                nn.ReLU(),
+            )
+            if qkv_hidden_dim
+            else nn.Sequential(
+                nn.Linear(dim, dim * 3, bias=bias), nn.BatchNorm1d(dim * 3), nn.ReLU()
+            )
         )
         self.attn_dropout = nn.Dropout(attn_dropout)
-        self.proj = nn.Sequential(
-            nn.Linear(dim, dim),
-            nn.BatchNorm1d(dim),
-            nn.ReLU())
+        self.proj = nn.Sequential(nn.Linear(dim, dim), nn.BatchNorm1d(dim), nn.ReLU())
         self.proj_dropout = nn.Dropout(proj_dropout)
         # self.ffn = nn.Sequential(
         #     nn.Linear(dim, dim // 2),
@@ -48,7 +57,9 @@ class TA_Attention(nn.Module):
 
     def attention(self, q, k, v):
         _, batch_size, _ = q.shape
-        attn_weights = torch.matmul(q, k.transpose(-2, -1)).contiguous() / math.sqrt(self.head_dim)
+        attn_weights = torch.matmul(q, k.transpose(-2, -1)).contiguous() / math.sqrt(
+            self.head_dim
+        )
         attn_weights = attn_weights.softmax(dim=-1)
 
         out = torch.matmul(self.attn_dropout(attn_weights), v)
