@@ -6,12 +6,13 @@ import torch.nn as nn
 class TA_Attention(nn.Module):
     def __init__(
         self,
+        input_dim,
         dim,
+        hidden_dim=None,
         num_heads=1,
         bias=False,
         attn_dropout=0.0,
         proj_dropout=0.0,
-        qkv_hidden_dim=None,
     ):
         super().__init__()
         assert dim % num_heads == 0, "dim must be divisible by num_heads"
@@ -22,16 +23,16 @@ class TA_Attention(nn.Module):
         # Input dim?
         self.qkv_transform = (
             nn.Sequential(
-                nn.Linear(dim, qkv_hidden_dim, bias=bias),
-                nn.BatchNorm1d(qkv_hidden_dim),
+                nn.Linear(input_dim, hidden_dim, bias=bias),
+                nn.BatchNorm1d(hidden_dim),
                 nn.ReLU(),
-                nn.Linear(qkv_hidden_dim, dim * 3, bias=bias),
+                nn.Linear(hidden_dim, dim * 3, bias=bias),
                 nn.BatchNorm1d(dim * 3),
                 nn.ReLU(),
             )
-            if qkv_hidden_dim
+            if hidden_dim
             else nn.Sequential(
-                nn.Linear(dim, dim * 3, bias=bias), nn.BatchNorm1d(dim * 3), nn.ReLU()
+                nn.Linear(input_dim, dim * 3, bias=bias), nn.BatchNorm1d(dim * 3), nn.ReLU()
             )
         )
         self.attn_dropout = nn.Dropout(attn_dropout)
