@@ -11,7 +11,7 @@ hydra:
   run:
     dir: .
 
-name: "byol-ta-cifar10-no-residual-4head-0.5-dropout-4096-qkv-hiddenDim" # change here for cifar100
+name: "byol-ta-cifar10-no-projector-no-residual-4head-0.5-dropout-contractive-query-key" # change here for cifar100
 method: "byol-ta"
 backbone:
   name: "resnet18"
@@ -19,10 +19,10 @@ method_kwargs:
   proj_hidden_dim: 4096
   proj_output_dim: 256
   pred_hidden_dim: 4096
+  query_dim: 128 
   num_heads: 4
   attn_dropout: 0.5
   proj_dropout: 0.0
-  qkv_hidden_dim: 4096
 momentum:
   base_tau: 0.99
   final_tau: 1.0
@@ -36,7 +36,7 @@ optimizer:
   name: "adamw"
   batch_size: 256
   lr: 1.0e-4
-  classifier_lr: 1.0e-3
+  classifier_lr: 1.0e-4
   ta_lr: 1.0e-4
   weight_decay: 0.01
   kwargs:

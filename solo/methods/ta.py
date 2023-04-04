@@ -52,6 +52,7 @@ class BYOLWithTA(BaseMomentumMethod):
         attn_dropout = cfg.method_kwargs.attn_dropout
         proj_dropout = cfg.method_kwargs.proj_dropout
         qkv_hidden_dim = cfg.method_kwargs.qkv_hidden_dim
+        query_dim = cfg.method_kwargs.query_dim
 
         self.ta_lr = cfg.optimizer.ta_lr
 
@@ -61,7 +62,8 @@ class BYOLWithTA(BaseMomentumMethod):
 
 
         self.student_TA = TA_Attention(
-            dim = proj_output_dim,
+            value_dim = proj_output_dim,
+            query_dim=query_dim,
             input_dim=self.features_dim,
             num_heads = num_heads,
             attn_dropout = attn_dropout,
@@ -69,7 +71,8 @@ class BYOLWithTA(BaseMomentumMethod):
             hidden_dim = qkv_hidden_dim,
         )
         self.teacher_TA = TA_Attention(
-            dim = proj_output_dim,
+            value_dim = proj_output_dim,
+            query_dim=query_dim,
             input_dim=self.features_dim,
             num_heads = num_heads,
             attn_dropout = attn_dropout,
@@ -112,6 +115,7 @@ class BYOLWithTA(BaseMomentumMethod):
 
         cfg.optimizer.ta_lr = omegaconf_select(cfg, "optimizer.ta_lr", cfg.optimizer.lr)
         cfg.method_kwargs.qkv_hidden_dim = omegaconf_select(cfg, "method_kwargs.qkv_hidden_dim", None)
+        cfg.method_kwargs.query_dim = omegaconf_select(cfg, "method_kwargs.query_dim", cfg.method_kwargs.proj_output_dim)
 
         return cfg
 
