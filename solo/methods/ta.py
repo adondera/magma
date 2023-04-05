@@ -53,6 +53,8 @@ class BYOLWithTA(BaseMomentumMethod):
         proj_dropout = cfg.method_kwargs.proj_dropout
         qkv_hidden_dim = cfg.method_kwargs.qkv_hidden_dim
         query_dim = cfg.method_kwargs.query_dim
+        self.gamma = cfg.method_kwargs.gamma
+        self.regularizer_weight = cfg.method_kwargs.regularizer_weight
 
         self.ta_lr = cfg.optimizer.ta_lr
 
@@ -116,6 +118,8 @@ class BYOLWithTA(BaseMomentumMethod):
         cfg.optimizer.ta_lr = omegaconf_select(cfg, "optimizer.ta_lr", cfg.optimizer.lr)
         cfg.method_kwargs.qkv_hidden_dim = omegaconf_select(cfg, "method_kwargs.qkv_hidden_dim", None)
         cfg.method_kwargs.query_dim = omegaconf_select(cfg, "method_kwargs.query_dim", cfg.method_kwargs.proj_output_dim)
+        cfg.method_kwargs.gamma = omegaconf_select(cfg, "method_kwargs.gamma", 0)
+        cfg.method_kwargs.regularizer_weight = omegaconf_select(cfg, "method_kwargs.regularizer_weight", 0.0)
 
         return cfg
 
@@ -161,6 +165,7 @@ class BYOLWithTA(BaseMomentumMethod):
         out = super().training_step(batch, batch_idx)
 
         neg_cos_sim = 0
+        attn_weights_loss = 0
 
         ta_output = []
         residuals = []
@@ -194,6 +199,7 @@ class BYOLWithTA(BaseMomentumMethod):
                     teacher_y = teacher_ta_output
 
                 neg_cos_sim += byol_loss_func(p, teacher_y)
+                attn_weights_loss += F.relu(self.gamma - torch.sqrt(student_attention_weights.var(dim=1) + 1e-4)).mean()
 
         class_loss = out["loss"]
 
@@ -229,4 +235,4 @@ class BYOLWithTA(BaseMomentumMethod):
         }
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
 
-        return neg_cos_sim + class_loss
+        return neg_cos_sim + class_loss + self.regularizer_weight * attn_weights_loss
