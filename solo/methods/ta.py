@@ -85,11 +85,11 @@ class BYOLWithTA(BaseMomentumMethod):
         initialize_momentum_params(self.student_TA, self.teacher_TA)
 
         # predictor
-        self.predictor = nn.Sequential(
-            nn.Linear(proj_output_dim, pred_hidden_dim),
+        self.student_ta_predictor = nn.Sequential(
+            nn.Linear(proj_output_dim + 2 * query_dim, pred_hidden_dim),
             nn.BatchNorm1d(pred_hidden_dim),
             nn.ReLU(),
-            nn.Linear(pred_hidden_dim, proj_output_dim),
+            nn.Linear(pred_hidden_dim, proj_output_dim + 2 * query_dim),
         )
 
         # print("Adding hooks")
@@ -132,7 +132,7 @@ class BYOLWithTA(BaseMomentumMethod):
         """
 
         extra_learnable_params = [
-            {"name": "predictor", "params": self.predictor.parameters()},
+            {"name": "student_ta_predictor", "params": self.student_ta_predictor.parameters()},
             {"name": "student_TA", "params": self.student_TA.parameters(), "lr": self.ta_lr},
         ]
         return super().learnable_params + extra_learnable_params
@@ -174,6 +174,15 @@ class BYOLWithTA(BaseMomentumMethod):
         for idx1 in range(self.num_large_crops):
             for idx2 in np.delete(range(self.num_crops), idx1):
                 student_q, student_k, student_v = self.student_TA(out["feats"][idx1])
+                
+                # Apply the student TA predictor on the student q, k, v
+                batch_size = student_q.shape[1]
+                qk = torch.stack([student_q, student_k]).permute(2, 0, 1, 3).reshape(batch_size, -1)
+                v = student_v.permute(1, 0, 2).reshape(batch_size, -1)
+                qkv = self.student_ta_predictor(torch.cat([qk, v], dim=1))
+                qk = qkv[:, :2 * self.student_TA.query_dim]
+                student_q, student_k = qk.reshape(batch_size, 2, self.student_TA.num_heads, -1).permute(1, 2, 0, 3).unbind(dim=0)
+                student_v = qkv[:, 2 * self.student_TA.query_dim:].reshape(batch_size, self.student_TA.num_heads, -1).permute(1, 0, 2)
 
                 with torch.no_grad():
                     teacher_q, teacher_k, teacher_v = self.teacher_TA(out["momentum_feats"][idx2])
@@ -190,15 +199,13 @@ class BYOLWithTA(BaseMomentumMethod):
                 residuals.append(student_ta_output)
                 attention_weights.append(student_attention_weights)
 
-                p = self.predictor(student_y)
-
                 with torch.no_grad():
                     teacher_ta_output, _ = self.teacher_TA.attention(
                         teacher_q, key_pool, value_pool
                     )
                     teacher_y = teacher_ta_output
 
-                neg_cos_sim += byol_loss_func(p, teacher_y)
+                neg_cos_sim += byol_loss_func(student_y, teacher_y)
                 attn_weights_loss += F.relu(self.gamma - torch.sqrt(student_attention_weights.var(dim=1) + 1e-4)).mean()
 
         class_loss = out["loss"]
