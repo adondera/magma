@@ -85,7 +85,9 @@ class TA_BarlowTwins(BaseMethod):
         assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.proj_dropout")
 
         cfg.method_kwargs.lamb = omegaconf_select(cfg, "method_kwargs.lamb", 0.0051)
-        cfg.method_kwargs.scale_loss = omegaconf_select(cfg, "method_kwargs.scale_loss", 0.024)
+        cfg.method_kwargs.scale_loss = omegaconf_select(
+            cfg, "method_kwargs.scale_loss", 0.024
+        )
 
         return cfg
 
@@ -97,7 +99,10 @@ class TA_BarlowTwins(BaseMethod):
             List[dict]: list of learnable parameters.
         """
 
-        extra_learnable_params = [{"name": "projector", "params": self.projector.parameters()}]
+        extra_learnable_params = [
+            {"name": "projector", "params": self.projector.parameters()},
+            {"name": "ta", "params": self.ta.parameters()},
+        ]
         return super().learnable_params + extra_learnable_params
 
     def forward(self, X):
@@ -144,27 +149,51 @@ class TA_BarlowTwins(BaseMethod):
         z2 = z2 + residual2
 
         # ------- barlow twins loss -------
-        barlow_loss = barlow_loss_func(z1, z2, lamb=self.lamb, scale_loss=self.scale_loss)
+        barlow_loss = barlow_loss_func(
+            z1, z2, lamb=self.lamb, scale_loss=self.scale_loss
+        )
 
         # TODO: Check that these metrics are computed correctly
         with torch.no_grad():
-            z_std = (
-                F.normalize(torch.stack([z1, z2]), dim=-1)
-                .std(dim=1)
-                .mean()
+            z_std = F.normalize(torch.stack([z1, z2]), dim=-1).std(dim=1).mean()
+            z_unnormalized_std = torch.stack([z1, z2]).std(dim=1).mean()
+            residual_unnormalized_std = (
+                torch.stack([residual1, residual2]).std(dim=1).mean()
             )
-            z_unnormalized_std = (
-                torch.stack([z1, z2]).std(dim=1).mean()
-            )
-            residual_unnormalized_std = torch.stack([residual1, residual2]).std(dim=1).mean()
             residual_std = (
                 F.normalize(torch.stack([residual1, residual2]), dim=-1)
                 .std(dim=1)
                 .mean()
             )
-            attention_entropy = torch.special.entr(torch.stack([attn_weights1, attn_weights2])).sum(dim=-1).mean()
-            residual_svd_entropy = torch.special.entr(F.normalize(torch.linalg.svdvals(torch.stack([attn_weights1, attn_weights2]).float()), dim=1, p=1.0)).sum(dim=-1).mean()
-            ta_svd_entropy = torch.special.entr(F.normalize(torch.linalg.svdvals(torch.stack([z1, z2]).float()), dim=1, p=1.0)).sum(dim=-1).mean()
+            attention_entropy = (
+                torch.special.entr(torch.stack([attn_weights1, attn_weights2]))
+                .sum(dim=-1)
+                .mean()
+            )
+            residual_svd_entropy = (
+                torch.special.entr(
+                    F.normalize(
+                        torch.linalg.svdvals(
+                            torch.stack([attn_weights1, attn_weights2]).float()
+                        ),
+                        dim=1,
+                        p=1.0,
+                    )
+                )
+                .sum(dim=-1)
+                .mean()
+            )
+            ta_svd_entropy = (
+                torch.special.entr(
+                    F.normalize(
+                        torch.linalg.svdvals(torch.stack([z1, z2]).float()),
+                        dim=1,
+                        p=1.0,
+                    )
+                )
+                .sum(dim=-1)
+                .mean()
+            )
 
         metrics = {
             "train_barlow_loss": barlow_loss,
