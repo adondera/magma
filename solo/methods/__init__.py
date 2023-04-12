@@ -39,6 +39,8 @@ from solo.methods.vicreg import VICReg
 from solo.methods.wmse import WMSE
 from solo.methods.ta import BYOLWithTA
 from solo.methods.ta_simclr import TA_SimCLR
+from solo.methods.ta_barlow import TA_BarlowTwins
+
 
 METHODS = {
     # base classes
@@ -65,6 +67,7 @@ METHODS = {
     "wmse": WMSE,
     "byol-ta": BYOLWithTA,
     "simclr-ta": TA_SimCLR,
+    "barlow-ta": TA_BarlowTwins,
 }
 __all__ = [
     "BarlowTwins",
@@ -89,4 +92,5 @@ __all__ = [
     "WMSE",
     "BYOLWithTA",
     "TA_SimCLR",
+    "TA_BarlowTwins",
 ]
