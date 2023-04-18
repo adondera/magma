@@ -53,43 +53,54 @@ class BYOLWithTA(BaseMomentumMethod):
         proj_dropout = cfg.method_kwargs.proj_dropout
         qkv_hidden_dim = cfg.method_kwargs.qkv_hidden_dim
         query_dim = cfg.method_kwargs.query_dim
+        value_dim = cfg.method_kwargs.value_dim
         self.gamma = cfg.method_kwargs.gamma
         self.regularizer_weight = cfg.method_kwargs.regularizer_weight
 
         self.ta_lr = cfg.optimizer.ta_lr
 
         assert (
-            proj_output_dim % num_heads == 0
-        ), "proj_output_dim must be divisible by num_heads"
-
+            self.features_dim % num_heads == 0
+        ), "features_dim must be divisible by num_heads"
 
         self.student_TA = TA_Attention(
-            value_dim = proj_output_dim,
+            value_dim=value_dim,
             query_dim=query_dim,
             input_dim=self.features_dim,
-            num_heads = num_heads,
-            attn_dropout = attn_dropout,
-            proj_dropout = proj_dropout,
-            hidden_dim = qkv_hidden_dim,
+            num_heads=num_heads,
+            attn_dropout=attn_dropout,
+            proj_dropout=proj_dropout,
+            hidden_dim=qkv_hidden_dim,
         )
+
         self.teacher_TA = TA_Attention(
-            value_dim = proj_output_dim,
+            value_dim=value_dim,
             query_dim=query_dim,
             input_dim=self.features_dim,
-            num_heads = num_heads,
-            attn_dropout = attn_dropout,
-            proj_dropout = proj_dropout,
-            hidden_dim = qkv_hidden_dim,
+            num_heads=num_heads,
+            attn_dropout=attn_dropout,
+            proj_dropout=proj_dropout,
+            hidden_dim=qkv_hidden_dim,
         )
 
         initialize_momentum_params(self.student_TA, self.teacher_TA)
 
         # predictor
-        self.predictor = nn.Sequential(
-            nn.Linear(proj_output_dim, pred_hidden_dim),
-            nn.BatchNorm1d(pred_hidden_dim),
-            nn.ReLU(),
-            nn.Linear(pred_hidden_dim, proj_output_dim),
+        # self.predictor = nn.Sequential(
+        #     nn.Linear(proj_output_dim, pred_hidden_dim),
+        #     nn.BatchNorm1d(pred_hidden_dim),
+        #     nn.ReLU(),
+        #     nn.Linear(pred_hidden_dim, proj_output_dim),
+        # )
+
+        self.student_TA_predictor = TA_Attention(
+            value_dim=value_dim,
+            query_dim=query_dim,
+            input_dim=proj_output_dim,
+            num_heads=num_heads,
+            attn_dropout=attn_dropout,
+            proj_dropout=proj_dropout,
+            hidden_dim=pred_hidden_dim,
         )
 
         # print("Adding hooks")
@@ -116,10 +127,19 @@ class BYOLWithTA(BaseMomentumMethod):
         assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.proj_dropout")
 
         cfg.optimizer.ta_lr = omegaconf_select(cfg, "optimizer.ta_lr", cfg.optimizer.lr)
-        cfg.method_kwargs.qkv_hidden_dim = omegaconf_select(cfg, "method_kwargs.qkv_hidden_dim", None)
-        cfg.method_kwargs.query_dim = omegaconf_select(cfg, "method_kwargs.query_dim", cfg.method_kwargs.proj_output_dim)
+        cfg.method_kwargs.qkv_hidden_dim = omegaconf_select(
+            cfg, "method_kwargs.qkv_hidden_dim", None
+        )
+        cfg.method_kwargs.query_dim = omegaconf_select(
+            cfg, "method_kwargs.query_dim", cfg.method_kwargs.proj_output_dim
+        )
+        cfg.method_kwargs.value_dim = omegaconf_select(
+            cfg, "method_kwargs.value_dim", cfg.method_kwargs.proj_output_dim
+        )
         cfg.method_kwargs.gamma = omegaconf_select(cfg, "method_kwargs.gamma", 0)
-        cfg.method_kwargs.regularizer_weight = omegaconf_select(cfg, "method_kwargs.regularizer_weight", 0.0)
+        cfg.method_kwargs.regularizer_weight = omegaconf_select(
+            cfg, "method_kwargs.regularizer_weight", 0.0
+        )
 
         return cfg
 
@@ -132,8 +152,12 @@ class BYOLWithTA(BaseMomentumMethod):
         """
 
         extra_learnable_params = [
-            {"name": "predictor", "params": self.predictor.parameters()},
-            {"name": "student_TA", "params": self.student_TA.parameters(), "lr": self.ta_lr},
+            {"name": "student_ta_predictor", "params": self.student_TA_predictor.parameters()},
+            {
+                "name": "student_TA",
+                "params": self.student_TA.parameters(),
+                "lr": self.ta_lr,
+            },
         ]
         return super().learnable_params + extra_learnable_params
 
@@ -170,13 +194,16 @@ class BYOLWithTA(BaseMomentumMethod):
         ta_output = []
         residuals = []
         attention_weights = []
+        second_attention_weights = []
 
         for idx1 in range(self.num_large_crops):
             for idx2 in np.delete(range(self.num_crops), idx1):
                 student_q, student_k, student_v = self.student_TA(out["feats"][idx1])
 
                 with torch.no_grad():
-                    teacher_q, teacher_k, teacher_v = self.teacher_TA(out["momentum_feats"][idx2])
+                    teacher_q, teacher_k, teacher_v = self.teacher_TA(
+                        out["momentum_feats"][idx2]
+                    )
 
                 key_pool = torch.cat([student_k, teacher_k.detach()], dim=1)
                 value_pool = torch.cat([student_v, teacher_v.detach()], dim=1)
@@ -190,7 +217,9 @@ class BYOLWithTA(BaseMomentumMethod):
                 residuals.append(student_ta_output)
                 attention_weights.append(student_attention_weights)
 
-                p = self.predictor(student_y)
+                student_q, student_k, student_v = self.student_TA_predictor(student_ta_output)
+                p, second_student_attention_weights =  self.student_TA_predictor.attention(student_q, student_k, student_v)
+                second_attention_weights.append(second_student_attention_weights)
 
                 with torch.no_grad():
                     teacher_ta_output, _ = self.teacher_TA.attention(
@@ -199,7 +228,9 @@ class BYOLWithTA(BaseMomentumMethod):
                     teacher_y = teacher_ta_output
 
                 neg_cos_sim += byol_loss_func(p, teacher_y)
-                attn_weights_loss += F.relu(self.gamma - torch.sqrt(student_attention_weights.var(dim=1) + 1e-4)).mean()
+                attn_weights_loss += F.relu(
+                    self.gamma - torch.sqrt(student_attention_weights.var(dim=1) + 1e-4)
+                ).mean()
 
         class_loss = out["loss"]
 
@@ -219,9 +250,32 @@ class BYOLWithTA(BaseMomentumMethod):
                 .std(dim=1)
                 .mean()
             )
-            attention_entropy = torch.special.entr(torch.stack(attention_weights)).sum(dim=-1).mean()
-            residual_svd_entropy = torch.special.entr(F.normalize(torch.linalg.svdvals(torch.stack(residuals).float()), dim=1, p=1.0)).sum(dim=-1).mean()
-            ta_svd_entropy = torch.special.entr(F.normalize(torch.linalg.svdvals(torch.stack(ta_output).float()), dim=1, p=1.0)).sum(dim=-1).mean()
+            attention_entropy = (
+                torch.special.entr(torch.stack(attention_weights)).sum(dim=-1).mean()
+            )
+            second_attention_entropy = torch.special.entr(torch.stack(second_attention_weights)).sum(dim=-1).mean()
+            residual_svd_entropy = (
+                torch.special.entr(
+                    F.normalize(
+                        torch.linalg.svdvals(torch.stack(residuals).float()),
+                        dim=1,
+                        p=1.0,
+                    )
+                )
+                .sum(dim=-1)
+                .mean()
+            )
+            ta_svd_entropy = (
+                torch.special.entr(
+                    F.normalize(
+                        torch.linalg.svdvals(torch.stack(ta_output).float()),
+                        dim=1,
+                        p=1.0,
+                    )
+                )
+                .sum(dim=-1)
+                .mean()
+            )
 
         metrics = {
             "train_neg_cos_sim": neg_cos_sim,
@@ -232,6 +286,7 @@ class BYOLWithTA(BaseMomentumMethod):
             "attention_entropy": attention_entropy,
             "residual_svd_entropy": residual_svd_entropy,
             "ta_svd_entropy": ta_svd_entropy,
+            "second_attention_entropy": second_attention_entropy,
         }
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
 
