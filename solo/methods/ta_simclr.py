@@ -26,6 +26,7 @@ import torch.nn.functional as F
 from solo.losses.simclr import simclr_loss_func
 from solo.methods.base import BaseMethod
 from solo.utils.ta_attention import TA_Attention
+from solo.utils.misc import omegaconf_select
 
 
 class TA_SimCLR(BaseMethod):
@@ -48,6 +49,7 @@ class TA_SimCLR(BaseMethod):
         num_heads: int = cfg.method_kwargs.num_heads
         attn_dropout = cfg.method_kwargs.attn_dropout
         proj_dropout = cfg.method_kwargs.proj_dropout
+        qkv_hidden_dim = cfg.method_kwargs.qkv_hidden_dim
 
         assert (
             proj_output_dim % num_heads == 0
@@ -60,7 +62,7 @@ class TA_SimCLR(BaseMethod):
             nn.Linear(proj_hidden_dim, proj_output_dim),
         )
 
-        self.ta = TA_Attention(proj_output_dim, num_heads, attn_dropout, proj_dropout)
+        self.ta = TA_Attention(proj_output_dim, num_heads, attn_dropout, proj_dropout, qkv_hidden_dim)
 
     @staticmethod
     def add_and_assert_specific_cfg(cfg: omegaconf.DictConfig) -> omegaconf.DictConfig:
@@ -81,6 +83,8 @@ class TA_SimCLR(BaseMethod):
         assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.num_heads")
         assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.attn_dropout")
         assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.proj_dropout")
+
+        cfg.method_kwargs.qkv_hidden_dim = omegaconf_select(cfg, "method_kwargs.qkv_hidden_dim", None)
 
         return cfg
 
@@ -149,7 +153,7 @@ class TA_SimCLR(BaseMethod):
         class_loss = out["loss"]
         z = torch.cat(out["z"])
         queries, keys, values = self.ta(z)
-        residual = self.ta.attention(queries, keys, values)
+        residual, attn_weights = self.ta.attention(queries, keys, values)
         z = z + residual
 
         # ------- contrastive loss -------
@@ -167,6 +171,7 @@ class TA_SimCLR(BaseMethod):
             unnormalized_residual_std = residual.std(dim=1).mean()
             z_std = F.normalize(z, dim=-1).std(dim=1).mean()
             unnormalized_z_std = z.std(dim=1).mean()
+            attention_entropy = torch.special.entr(torch.stack(attn_weights)).sum(dim=-1).mean()
 
         metrics = {
             "train_nce_loss": nce_loss,
@@ -174,6 +179,7 @@ class TA_SimCLR(BaseMethod):
             "train_residual_unnormalized_std": unnormalized_residual_std,
             "train_z_std": z_std,
             "train_z_unnormalized_std": unnormalized_z_std,
+            "attention_entropy": attention_entropy,        
         }
 
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
