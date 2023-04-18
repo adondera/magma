@@ -2,6 +2,7 @@
 
 # ipynb checkpoints
 .ipynb_checkpoints
+*.ipynb
 
 # tensorboard dir
 runs/

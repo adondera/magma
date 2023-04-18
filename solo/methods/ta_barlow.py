@@ -51,6 +51,9 @@ class TA_BarlowTwins(BaseMethod):
         num_heads: int = cfg.method_kwargs.num_heads
         attn_dropout = cfg.method_kwargs.attn_dropout
         proj_dropout = cfg.method_kwargs.proj_dropout
+        qkv_hidden_dim = cfg.method_kwargs.qkv_hidden_dim
+        query_dim = cfg.method_kwargs.query_dim
+        value_dim = cfg.method_kwargs.value_dim
 
         # projector
         self.projector = nn.Sequential(
@@ -63,7 +66,16 @@ class TA_BarlowTwins(BaseMethod):
             nn.Linear(proj_hidden_dim, proj_output_dim),
         )
 
-        self.ta = TA_Attention(proj_output_dim, num_heads, attn_dropout, proj_dropout)
+        # TODO: Add a number of hidden layers param to TA?
+        self.ta = TA_Attention(
+            value_dim=value_dim,
+            query_dim=query_dim,
+            input_dim=proj_output_dim,
+            num_heads=num_heads,
+            attn_dropout=attn_dropout,
+            proj_dropout=proj_dropout,
+            hidden_dim=qkv_hidden_dim,
+        )
 
     @staticmethod
     def add_and_assert_specific_cfg(cfg: omegaconf.DictConfig) -> omegaconf.DictConfig:
@@ -87,6 +99,15 @@ class TA_BarlowTwins(BaseMethod):
         cfg.method_kwargs.lamb = omegaconf_select(cfg, "method_kwargs.lamb", 0.0051)
         cfg.method_kwargs.scale_loss = omegaconf_select(
             cfg, "method_kwargs.scale_loss", 0.024
+        )
+        cfg.method_kwargs.qkv_hidden_dim = omegaconf_select(
+            cfg, "method_kwargs.qkv_hidden_dim", None
+        )
+        cfg.method_kwargs.query_dim = omegaconf_select(
+            cfg, "method_kwargs.query_dim", cfg.method_kwargs.proj_output_dim
+        )
+        cfg.method_kwargs.value_dim = omegaconf_select(
+            cfg, "method_kwargs.value_dim", cfg.method_kwargs.proj_output_dim
         )
 
         return cfg
@@ -142,11 +163,8 @@ class TA_BarlowTwins(BaseMethod):
         key_pool = torch.cat([key1, key2], dim=1)
         value_pool = torch.cat([value1, value2], dim=1)
 
-        residual1, attn_weights1 = self.ta.attention(query1, key_pool, value_pool)
-        residual2, attn_weights2 = self.ta.attention(query2, key_pool, value_pool)
-
-        z1 = z1 + residual1
-        z2 = z2 + residual2
+        z1, attn_weights1 = self.ta.attention(query1, key_pool, value_pool)
+        z2, attn_weights2 = self.ta.attention(query2, key_pool, value_pool)
 
         # ------- barlow twins loss -------
         barlow_loss = barlow_loss_func(
@@ -157,14 +175,8 @@ class TA_BarlowTwins(BaseMethod):
         with torch.no_grad():
             z_std = F.normalize(torch.stack([z1, z2]), dim=-1).std(dim=1).mean()
             z_unnormalized_std = torch.stack([z1, z2]).std(dim=1).mean()
-            residual_unnormalized_std = (
-                torch.stack([residual1, residual2]).std(dim=1).mean()
-            )
-            residual_std = (
-                F.normalize(torch.stack([residual1, residual2]), dim=-1)
-                .std(dim=1)
-                .mean()
-            )
+            residual_unnormalized_std = torch.stack([z1, z2]).std(dim=1).mean()
+            residual_std = F.normalize(torch.stack([z1, z2]), dim=-1).std(dim=1).mean()
             attention_entropy = (
                 torch.special.entr(torch.stack([attn_weights1, attn_weights2]))
                 .sum(dim=-1)
