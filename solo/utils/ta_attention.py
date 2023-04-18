@@ -6,36 +6,42 @@ import torch.nn as nn
 class TA_Attention(nn.Module):
     def __init__(
         self,
-        dim,
+        input_dim,
+        query_dim,
+        value_dim,
+        hidden_dim=None,
         num_heads=1,
         bias=False,
         attn_dropout=0.0,
         proj_dropout=0.0,
-        qkv_hidden_dim=None,
     ):
         super().__init__()
-        assert dim % num_heads == 0, "dim must be divisible by num_heads"
+        assert value_dim % num_heads == 0, "value dim must be divisible by num_heads"
+        assert query_dim % num_heads == 0, "query dim must be divisible by num_heads"
+        self.value_dim = value_dim
+        self.query_dim = query_dim
         self.num_heads = num_heads
-        self.head_dim = dim // num_heads
-        self.d = math.sqrt(self.head_dim)
+        self.value_head_dim = value_dim // num_heads
+        self.query_head_dim = query_dim // num_heads
+        self.d = math.sqrt(self.query_head_dim)
 
         # Input dim?
         self.qkv_transform = (
             nn.Sequential(
-                nn.Linear(dim, qkv_hidden_dim, bias=bias),
-                nn.BatchNorm1d(qkv_hidden_dim),
+                nn.Linear(input_dim, hidden_dim, bias=bias),
+                nn.BatchNorm1d(hidden_dim),
                 nn.ReLU(),
-                nn.Linear(qkv_hidden_dim, dim * 3, bias=bias),
-                nn.BatchNorm1d(dim * 3),
+                nn.Linear(hidden_dim, query_dim * 2 + value_dim, bias=bias),
+                nn.BatchNorm1d(query_dim * 2 + value_dim),
                 nn.ReLU(),
             )
-            if qkv_hidden_dim
+            if hidden_dim
             else nn.Sequential(
-                nn.Linear(dim, dim * 3, bias=bias), nn.BatchNorm1d(dim * 3), nn.ReLU()
+                nn.Linear(input_dim, query_dim * 2 + value_dim, bias=bias), nn.BatchNorm1d(query_dim * 2 + value_dim), nn.ReLU()
             )
         )
         self.attn_dropout = nn.Dropout(attn_dropout)
-        self.proj = nn.Sequential(nn.Linear(dim, dim), nn.BatchNorm1d(dim), nn.ReLU())
+        self.proj = nn.Sequential(nn.Linear(value_dim, value_dim), nn.BatchNorm1d(value_dim), nn.ReLU())
         self.proj_dropout = nn.Dropout(proj_dropout)
         # self.ffn = nn.Sequential(
         #     nn.Linear(dim, dim // 2),
@@ -49,21 +55,19 @@ class TA_Attention(nn.Module):
     def forward(self, x):
         batch_size, _ = x.shape
         qkv = self.qkv_transform(x)
-        qkv = qkv.reshape(batch_size, 3, self.num_heads, self.head_dim)
-        qkv = qkv.permute(1, 2, 0, 3)
-        q, k, v = torch.unbind(qkv, dim=0)
+        qv = qkv[:, : self.query_dim * 2]
+        q, k = qv.reshape(batch_size, 2, self.num_heads, self.query_head_dim).permute(1, 2, 0, 3).unbind(dim=0)
+        v = qkv[:, self.query_dim * 2 :].reshape(batch_size, self.num_heads, self.value_head_dim).permute(1, 0, 2)
 
         return q, k, v
 
     def attention(self, q, k, v):
         _, batch_size, _ = q.shape
-        attn_weights = torch.matmul(q, k.transpose(-2, -1)).contiguous() / math.sqrt(
-            self.head_dim
-        )
+        attn_weights = torch.matmul(q, k.transpose(-2, -1)).contiguous() / self.d
         attn_weights = attn_weights.softmax(dim=-1)
 
         out = torch.matmul(self.attn_dropout(attn_weights), v)
-        out = out.transpose(0, 1).reshape(batch_size, self.num_heads * self.head_dim)
+        out = out.transpose(0, 1).reshape(batch_size, self.value_dim)
         out = self.proj(out)
         out = self.proj_dropout(out)
 

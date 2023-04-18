@@ -46,13 +46,15 @@ class BYOLWithTA(BaseMomentumMethod):
 
         super().__init__(cfg)
 
-        proj_hidden_dim: int = cfg.method_kwargs.proj_hidden_dim
         proj_output_dim: int = cfg.method_kwargs.proj_output_dim
         pred_hidden_dim: int = cfg.method_kwargs.pred_hidden_dim
         num_heads: int = cfg.method_kwargs.num_heads
         attn_dropout = cfg.method_kwargs.attn_dropout
         proj_dropout = cfg.method_kwargs.proj_dropout
         qkv_hidden_dim = cfg.method_kwargs.qkv_hidden_dim
+        query_dim = cfg.method_kwargs.query_dim
+        self.gamma = cfg.method_kwargs.gamma
+        self.regularizer_weight = cfg.method_kwargs.regularizer_weight
 
         self.ta_lr = cfg.optimizer.ta_lr
 
@@ -60,38 +62,26 @@ class BYOLWithTA(BaseMomentumMethod):
             proj_output_dim % num_heads == 0
         ), "proj_output_dim must be divisible by num_heads"
 
-        # projector
-        self.projector = nn.Sequential(
-            nn.Linear(self.features_dim, proj_hidden_dim),
-            nn.BatchNorm1d(proj_hidden_dim),
-            nn.ReLU(),
-            nn.Linear(proj_hidden_dim, proj_output_dim),
-        )
-
-        # momentum projector
-        self.momentum_projector = nn.Sequential(
-            nn.Linear(self.features_dim, proj_hidden_dim),
-            nn.BatchNorm1d(proj_hidden_dim),
-            nn.ReLU(),
-            nn.Linear(proj_hidden_dim, proj_output_dim),
-        )
 
         self.student_TA = TA_Attention(
-            dim = proj_output_dim,
+            value_dim = proj_output_dim,
+            query_dim=query_dim,
+            input_dim=self.features_dim,
             num_heads = num_heads,
             attn_dropout = attn_dropout,
             proj_dropout = proj_dropout,
-            qkv_hidden_dim = qkv_hidden_dim,
+            hidden_dim = qkv_hidden_dim,
         )
         self.teacher_TA = TA_Attention(
-            dim = proj_output_dim,
+            value_dim = proj_output_dim,
+            query_dim=query_dim,
+            input_dim=self.features_dim,
             num_heads = num_heads,
             attn_dropout = attn_dropout,
             proj_dropout = proj_dropout,
-            qkv_hidden_dim = qkv_hidden_dim,
+            hidden_dim = qkv_hidden_dim,
         )
 
-        initialize_momentum_params(self.projector, self.momentum_projector)
         initialize_momentum_params(self.student_TA, self.teacher_TA)
 
         # predictor
@@ -127,6 +117,9 @@ class BYOLWithTA(BaseMomentumMethod):
 
         cfg.optimizer.ta_lr = omegaconf_select(cfg, "optimizer.ta_lr", cfg.optimizer.lr)
         cfg.method_kwargs.qkv_hidden_dim = omegaconf_select(cfg, "method_kwargs.qkv_hidden_dim", None)
+        cfg.method_kwargs.query_dim = omegaconf_select(cfg, "method_kwargs.query_dim", cfg.method_kwargs.proj_output_dim)
+        cfg.method_kwargs.gamma = omegaconf_select(cfg, "method_kwargs.gamma", 0)
+        cfg.method_kwargs.regularizer_weight = omegaconf_select(cfg, "method_kwargs.regularizer_weight", 0.0)
 
         return cfg
 
@@ -139,7 +132,6 @@ class BYOLWithTA(BaseMomentumMethod):
         """
 
         extra_learnable_params = [
-            {"name": "projector", "params": self.projector.parameters()},
             {"name": "predictor", "params": self.predictor.parameters()},
             {"name": "student_TA", "params": self.student_TA.parameters(), "lr": self.ta_lr},
         ]
@@ -154,7 +146,6 @@ class BYOLWithTA(BaseMomentumMethod):
         """
 
         extra_momentum_pairs = [
-            (self.projector, self.momentum_projector),
             (self.student_TA, self.teacher_TA),
         ]
         return super().momentum_pairs + extra_momentum_pairs
@@ -174,6 +165,7 @@ class BYOLWithTA(BaseMomentumMethod):
         out = super().training_step(batch, batch_idx)
 
         neg_cos_sim = 0
+        attn_weights_loss = 0
 
         ta_output = []
         residuals = []
@@ -181,14 +173,10 @@ class BYOLWithTA(BaseMomentumMethod):
 
         for idx1 in range(self.num_large_crops):
             for idx2 in np.delete(range(self.num_crops), idx1):
-                z = self.projector(out["feats"][idx1])
-                with torch.no_grad():
-                    momentum_z = self.momentum_projector(out["momentum_feats"][idx2])
-
-                student_q, student_k, student_v = self.student_TA(z)
+                student_q, student_k, student_v = self.student_TA(out["feats"][idx1])
 
                 with torch.no_grad():
-                    teacher_q, teacher_k, teacher_v = self.teacher_TA(momentum_z)
+                    teacher_q, teacher_k, teacher_v = self.teacher_TA(out["momentum_feats"][idx2])
 
                 key_pool = torch.cat([student_k, teacher_k.detach()], dim=1)
                 value_pool = torch.cat([student_v, teacher_v.detach()], dim=1)
@@ -211,6 +199,7 @@ class BYOLWithTA(BaseMomentumMethod):
                     teacher_y = teacher_ta_output
 
                 neg_cos_sim += byol_loss_func(p, teacher_y)
+                attn_weights_loss += F.relu(self.gamma - torch.sqrt(student_attention_weights.var(dim=1) + 1e-4)).mean()
 
         class_loss = out["loss"]
 
@@ -246,4 +235,4 @@ class BYOLWithTA(BaseMomentumMethod):
         }
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
 
-        return neg_cos_sim + class_loss
+        return neg_cos_sim + class_loss + self.regularizer_weight * attn_weights_loss
