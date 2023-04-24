@@ -27,6 +27,7 @@ from solo.losses.barlow import barlow_loss_func
 from solo.methods.base import BaseMethod
 from solo.utils.misc import omegaconf_select
 from solo.utils.ta_attention import TA_Attention
+from solo.utils.embedding_propagation import embedding_propagation
 
 
 class TA_BarlowTwins(BaseMethod):
@@ -67,15 +68,24 @@ class TA_BarlowTwins(BaseMethod):
         )
 
         # TODO: Add a number of hidden layers param to TA?
-        self.ta = TA_Attention(
-            value_dim=value_dim,
-            query_dim=query_dim,
-            input_dim=proj_output_dim,
-            num_heads=num_heads,
-            attn_dropout=attn_dropout,
-            proj_dropout=proj_dropout,
-            hidden_dim=qkv_hidden_dim,
-        )
+        # self.ta = TA_Attention(
+        #     value_dim=value_dim,
+        #     query_dim=query_dim,
+        #     input_dim=proj_output_dim,
+        #     num_heads=num_heads,
+        #     attn_dropout=attn_dropout,
+        #     proj_dropout=proj_dropout,
+        #     hidden_dim=qkv_hidden_dim,
+        # )
+        # self.ta.qkv_transform = nn.Sequential(
+        #     nn.Linear(self.features_dim, proj_hidden_dim),
+        #     nn.BatchNorm1d(proj_hidden_dim),
+        #     nn.ReLU(),
+        #     nn.Linear(proj_hidden_dim, proj_hidden_dim),
+        #     nn.BatchNorm1d(proj_hidden_dim),
+        #     nn.ReLU(),
+        #     nn.Linear(proj_hidden_dim, query_dim * 2 + value_dim),
+        # )
 
     @staticmethod
     def add_and_assert_specific_cfg(cfg: omegaconf.DictConfig) -> omegaconf.DictConfig:
@@ -122,7 +132,7 @@ class TA_BarlowTwins(BaseMethod):
 
         extra_learnable_params = [
             {"name": "projector", "params": self.projector.parameters()},
-            {"name": "ta", "params": self.ta.parameters()},
+            # {"name": "ta", "params": self.ta.parameters()},
         ]
         return super().learnable_params + extra_learnable_params
 
@@ -156,15 +166,13 @@ class TA_BarlowTwins(BaseMethod):
         out = super().training_step(batch, batch_idx)
         class_loss = out["loss"]
         z1, z2 = out["z"]
+        b, c = z1.shape
 
-        query1, key1, value1 = self.ta(z1)
-        query2, key2, value2 = self.ta(z2)
+        all_z = torch.cat([z1, z2])
+        all_z = embedding_propagation(all_z, alpha=0.5, rbf_scale=1.0, norm_prop=False)
 
-        key_pool = torch.cat([key1, key2], dim=1)
-        value_pool = torch.cat([value1, value2], dim=1)
-
-        z1, attn_weights1 = self.ta.attention(query1, key_pool, value_pool)
-        z2, attn_weights2 = self.ta.attention(query2, key_pool, value_pool)
+        z1 = all_z[:b]
+        z2 = all_z[b:]
 
         # ------- barlow twins loss -------
         barlow_loss = barlow_loss_func(
@@ -177,24 +185,6 @@ class TA_BarlowTwins(BaseMethod):
             z_unnormalized_std = torch.stack([z1, z2]).std(dim=1).mean()
             residual_unnormalized_std = torch.stack([z1, z2]).std(dim=1).mean()
             residual_std = F.normalize(torch.stack([z1, z2]), dim=-1).std(dim=1).mean()
-            attention_entropy = (
-                torch.special.entr(torch.stack([attn_weights1, attn_weights2]))
-                .sum(dim=-1)
-                .mean()
-            )
-            residual_svd_entropy = (
-                torch.special.entr(
-                    F.normalize(
-                        torch.linalg.svdvals(
-                            torch.stack([attn_weights1, attn_weights2]).float()
-                        ),
-                        dim=1,
-                        p=1.0,
-                    )
-                )
-                .sum(dim=-1)
-                .mean()
-            )
             ta_svd_entropy = (
                 torch.special.entr(
                     F.normalize(
@@ -213,8 +203,6 @@ class TA_BarlowTwins(BaseMethod):
             "train_z_std": z_std,
             "train_residual_std": residual_std,
             "train_residual_unnormalized_std": residual_unnormalized_std,
-            "attention_entropy": attention_entropy,
-            "residual_svd_entropy": residual_svd_entropy,
             "ta_svd_entropy": ta_svd_entropy,
         }
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
