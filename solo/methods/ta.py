@@ -86,21 +86,11 @@ class BYOLWithTA(BaseMomentumMethod):
         initialize_momentum_params(self.student_TA, self.teacher_TA)
 
         # predictor
-        # self.predictor = nn.Sequential(
-        #     nn.Linear(proj_output_dim, pred_hidden_dim),
-        #     nn.BatchNorm1d(pred_hidden_dim),
-        #     nn.ReLU(),
-        #     nn.Linear(pred_hidden_dim, proj_output_dim),
-        # )
-
-        self.student_TA_predictor = TA_Attention(
-            value_dim=value_dim,
-            query_dim=query_dim,
-            input_dim=proj_output_dim,
-            num_heads=num_heads,
-            attn_dropout=attn_dropout,
-            proj_dropout=proj_dropout,
-            hidden_dim=pred_hidden_dim,
+        self.predictor = nn.Sequential(
+            nn.Linear(proj_output_dim, pred_hidden_dim),
+            nn.BatchNorm1d(pred_hidden_dim),
+            nn.ReLU(),
+            nn.Linear(pred_hidden_dim, proj_output_dim),
         )
 
         # print("Adding hooks")
@@ -152,7 +142,7 @@ class BYOLWithTA(BaseMomentumMethod):
         """
 
         extra_learnable_params = [
-            {"name": "student_ta_predictor", "params": self.student_TA_predictor.parameters()},
+            {"name": "predictor", "params": self.predictor.parameters()},
             {
                 "name": "student_TA",
                 "params": self.student_TA.parameters(),
@@ -194,7 +184,6 @@ class BYOLWithTA(BaseMomentumMethod):
         ta_output = []
         residuals = []
         attention_weights = []
-        second_attention_weights = []
 
         for idx1 in range(self.num_large_crops):
             for idx2 in np.delete(range(self.num_crops), idx1):
@@ -217,9 +206,7 @@ class BYOLWithTA(BaseMomentumMethod):
                 residuals.append(student_ta_output)
                 attention_weights.append(student_attention_weights)
 
-                student_q, student_k, student_v = self.student_TA_predictor(student_ta_output)
-                p, second_student_attention_weights =  self.student_TA_predictor.attention(student_q, student_k, student_v)
-                second_attention_weights.append(second_student_attention_weights)
+                p = self.predictor(student_y)
 
                 with torch.no_grad():
                     teacher_ta_output, _ = self.teacher_TA.attention(
@@ -253,7 +240,6 @@ class BYOLWithTA(BaseMomentumMethod):
             attention_entropy = (
                 torch.special.entr(torch.stack(attention_weights)).sum(dim=-1).mean()
             )
-            second_attention_entropy = torch.special.entr(torch.stack(second_attention_weights)).sum(dim=-1).mean()
             residual_svd_entropy = (
                 torch.special.entr(
                     F.normalize(
@@ -286,7 +272,6 @@ class BYOLWithTA(BaseMomentumMethod):
             "attention_entropy": attention_entropy,
             "residual_svd_entropy": residual_svd_entropy,
             "ta_svd_entropy": ta_svd_entropy,
-            "second_attention_entropy": second_attention_entropy,
         }
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
 
