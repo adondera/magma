@@ -27,6 +27,7 @@ from solo.losses.simclr import simclr_loss_func
 from solo.methods.base import BaseMethod
 from solo.utils.ta_attention import TA_Attention
 from solo.utils.misc import omegaconf_select
+from solo.utils.embedding_propagation import embedding_propagation
 
 
 class TA_SimCLR(BaseMethod):
@@ -60,15 +61,15 @@ class TA_SimCLR(BaseMethod):
             nn.Linear(proj_hidden_dim, proj_output_dim),
         )
 
-        self.ta = TA_Attention(
-            value_dim=value_dim,
-            query_dim=query_dim,
-            input_dim=proj_output_dim,
-            num_heads=num_heads,
-            attn_dropout=attn_dropout,
-            proj_dropout=proj_dropout,
-            hidden_dim=qkv_hidden_dim,
-        )
+        # self.ta = TA_Attention(
+        #     value_dim=value_dim,
+        #     query_dim=query_dim,
+        #     input_dim=proj_output_dim,
+        #     num_heads=num_heads,
+        #     attn_dropout=attn_dropout,
+        #     proj_dropout=proj_dropout,
+        #     hidden_dim=qkv_hidden_dim,
+        # )
 
     @staticmethod
     def add_and_assert_specific_cfg(cfg: omegaconf.DictConfig) -> omegaconf.DictConfig:
@@ -112,7 +113,7 @@ class TA_SimCLR(BaseMethod):
 
         extra_learnable_params = [
             {"name": "projector", "params": self.projector.parameters()},
-            {"name": "ta", "params": self.ta.parameters()},
+            # {"name": "ta", "params": self.ta.parameters()},
         ]
         return super().learnable_params + extra_learnable_params
 
@@ -166,9 +167,7 @@ class TA_SimCLR(BaseMethod):
         out = super().training_step(batch, batch_idx)
         class_loss = out["loss"]
         z = torch.cat(out["z"])
-        queries, keys, values = self.ta(z)
-        residual, attn_weights = self.ta.attention(queries, keys, values)
-        z = z + residual
+        z = embedding_propagation(z, alpha=0.5, rbf_scale=1.0, norm_prop=False)
 
         # ------- contrastive loss -------
         n_augs = self.num_large_crops + self.num_small_crops
@@ -181,19 +180,13 @@ class TA_SimCLR(BaseMethod):
         )
 
         with torch.no_grad():
-            residual_std = F.normalize(residual, dim=-1).std(dim=1).mean()
-            unnormalized_residual_std = residual.std(dim=1).mean()
             z_std = F.normalize(z, dim=-1).std(dim=1).mean()
             unnormalized_z_std = z.std(dim=1).mean()
-            attention_entropy = torch.special.entr(attn_weights).sum(dim=-1).mean()
 
         metrics = {
             "train_nce_loss": nce_loss,
-            "train_residual_std": residual_std,
-            "train_residual_unnormalized_std": unnormalized_residual_std,
             "train_z_std": z_std,
             "train_z_unnormalized_std": unnormalized_z_std,
-            "attention_entropy": attention_entropy,
         }
 
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
