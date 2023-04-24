@@ -191,7 +191,7 @@ class BYOLWithTA(BaseMomentumMethod):
         out = super().training_step(batch, batch_idx)
 
         neg_cos_sim = 0
-
+        ta_output = []
         for idx1 in range(self.num_large_crops):
             for idx2 in np.delete(range(self.num_crops), idx1):
                 z = self.projector(out["feats"][idx1])
@@ -204,11 +204,40 @@ class BYOLWithTA(BaseMomentumMethod):
 
                 z = all_z[:b]
                 momentum_z = all_z[b:]
+                ta_output.append(z)
 
                 p = self.predictor(z)
 
                 neg_cos_sim += byol_loss_func(p, momentum_z)
 
         class_loss = out["loss"]
+
+        with torch.no_grad():
+            z_std = (
+                F.normalize(torch.stack(ta_output[: self.num_large_crops]), dim=-1)
+                .std(dim=1)
+                .mean()
+            )
+            z_unnormalized_std = (
+                torch.stack(ta_output[: self.num_large_crops]).std(dim=1).mean()
+            )
+            ta_svd_entropy = (
+                torch.special.entr(
+                    F.normalize(
+                        torch.linalg.svdvals(torch.stack(ta_output).float()),
+                        dim=1,
+                        p=1.0,
+                    )
+                )
+                .sum(dim=-1)
+                .mean()
+            )
+        metrics = {
+            "train_neg_cos_sim": neg_cos_sim,
+            "train_z_unnormalized_std": z_unnormalized_std,
+            "train_z_std": z_std,
+            "ta_svd_entropy": ta_svd_entropy,
+        }
+        self.log_dict(metrics, on_epoch=True, sync_dist=True)
 
         return neg_cos_sim + class_loss
