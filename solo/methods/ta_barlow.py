@@ -186,7 +186,7 @@ class TA_BarlowTwins(BaseMethod):
                 torch.special.entr(
                     F.normalize(
                         torch.linalg.svdvals(
-                            torch.stack([attn_weights1, attn_weights2]).float()
+                            torch.stack([z1, z2]).float()
                         ),
                         dim=1,
                         p=1.0,
