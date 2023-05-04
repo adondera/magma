@@ -3,15 +3,29 @@ import torch.nn.functional as F
 import numpy as np
 
 
-def get_similarity_matrix(x, rbf_scale):
+def get_similarity_matrix(x, rbf_scale, scaling_factor=True):
     b, c = x.size()
-    sq_dist = ((x.view(b, 1, c) - x.view(1, b, c)) ** 2).sum(-1) / np.sqrt(c)
+    sq_dist = ((x.view(b, 1, c) - x.view(1, b, c)) ** 2).sum(-1)
+    if scaling_factor:
+        sq_dist  = sq_dist / np.sqrt(c)
     mask = sq_dist != 0
     sq_dist = sq_dist / sq_dist[mask].std()
     weights = torch.exp(-sq_dist * rbf_scale)
     mask = torch.eye(weights.size(1), dtype=torch.bool, device=weights.device)
     weights = weights * (~mask).float()
     return weights
+
+def get_distance_matrix(x):
+    b, c = x.size()
+    sq_dist = ((x.view(b, 1, c) - x.view(1, b, c)) ** 2).sum(-1)
+    return sq_dist
+
+def get_laplacian(weights):
+    # According to the paper, normalized laplacian might work better
+    isqrt_diag = 1.0 / torch.sqrt(1e-4 + torch.sum(weights, dim=-1))
+    # checknan(laplacian=isqrt_diag)
+    S = weights * isqrt_diag[None, :] * isqrt_diag[:, None]
+    return S
 
 
 def embedding_propagation(x, alpha, rbf_scale, norm_prop, propagator=None):
