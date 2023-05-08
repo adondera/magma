@@ -24,10 +24,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from solo.losses.simclr import simclr_loss_func
+from solo.losses.koleo import KoLeoLoss
+from solo.losses.manifold_regularizer import manifold_regularizer_loss
 from solo.methods.base import BaseMethod
 from solo.utils.ta_attention import TA_Attention
 from solo.utils.misc import omegaconf_select
-from solo.utils.embedding_propagation import embedding_propagation
 
 
 class TA_SimCLR(BaseMethod):
@@ -44,6 +45,7 @@ class TA_SimCLR(BaseMethod):
         super().__init__(cfg)
 
         self.temperature: float = cfg.method_kwargs.temperature
+        self.regularizer_weight = cfg.method_kwargs.regularizer_weight
 
         proj_hidden_dim: int = cfg.method_kwargs.proj_hidden_dim
         proj_output_dim: int = cfg.method_kwargs.proj_output_dim
@@ -61,15 +63,17 @@ class TA_SimCLR(BaseMethod):
             nn.Linear(proj_hidden_dim, proj_output_dim),
         )
 
-        # self.ta = TA_Attention(
-        #     value_dim=value_dim,
-        #     query_dim=query_dim,
-        #     input_dim=proj_output_dim,
-        #     num_heads=num_heads,
-        #     attn_dropout=attn_dropout,
-        #     proj_dropout=proj_dropout,
-        #     hidden_dim=qkv_hidden_dim,
-        # )
+        self.ta = TA_Attention(
+            value_dim=value_dim,
+            query_dim=query_dim,
+            input_dim=proj_output_dim,
+            num_heads=num_heads,
+            attn_dropout=attn_dropout,
+            proj_dropout=proj_dropout,
+            hidden_dim=qkv_hidden_dim,
+        )
+
+        # self.koleo = KoLeoLoss()
 
     @staticmethod
     def add_and_assert_specific_cfg(cfg: omegaconf.DictConfig) -> omegaconf.DictConfig:
@@ -101,6 +105,10 @@ class TA_SimCLR(BaseMethod):
             cfg, "method_kwargs.value_dim", cfg.method_kwargs.proj_output_dim
         )
 
+        cfg.method_kwargs.regularizer_weight = omegaconf_select(
+            cfg, "method_kwargs.regularizer_weight", 0.0
+        )
+
         return cfg
 
     @property
@@ -113,7 +121,7 @@ class TA_SimCLR(BaseMethod):
 
         extra_learnable_params = [
             {"name": "projector", "params": self.projector.parameters()},
-            # {"name": "ta", "params": self.ta.parameters()},
+            {"name": "ta", "params": self.ta.parameters()},
         ]
         return super().learnable_params + extra_learnable_params
 
@@ -167,7 +175,13 @@ class TA_SimCLR(BaseMethod):
         out = super().training_step(batch, batch_idx)
         class_loss = out["loss"]
         z = torch.cat(out["z"])
-        z = embedding_propagation(z, alpha=0.5, rbf_scale=1.0, norm_prop=False)
+        queries, keys, values = self.ta(z)
+        residual, attn_weights = self.ta.attention(queries, keys, values)
+        regularizer_loss, collapse_loss = manifold_regularizer_loss(z, residual)
+        z = z + residual
+
+        # regularizer_loss = self.koleo(residual) * self.regularizer_weight
+        # z = embedding_propagation(z, alpha=0.5, rbf_scale=1.0, norm_prop=False)
 
         # ------- contrastive loss -------
         n_augs = self.num_large_crops + self.num_small_crops
@@ -180,15 +194,23 @@ class TA_SimCLR(BaseMethod):
         )
 
         with torch.no_grad():
+            residual_std = F.normalize(residual, dim=-1).std(dim=1).mean()
+            unnormalized_residual_std = residual.std(dim=1).mean()
             z_std = F.normalize(z, dim=-1).std(dim=1).mean()
             unnormalized_z_std = z.std(dim=1).mean()
+            attention_entropy = torch.special.entr(attn_weights).sum(dim=-1).mean()
 
         metrics = {
             "train_nce_loss": nce_loss,
+            "train_residual_std": residual_std,
+            "train_residual_unnormalized_std": unnormalized_residual_std,
             "train_z_std": z_std,
             "train_z_unnormalized_std": unnormalized_z_std,
+            "attention_entropy": attention_entropy,
+            "regularizer_loss": regularizer_loss,
+            "collapse_loss": collapse_loss,
         }
 
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
 
-        return nce_loss + class_loss
+        return nce_loss + class_loss + regularizer_loss * self.regularizer_weight + collapse_loss

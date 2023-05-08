@@ -20,12 +20,15 @@ def get_distance_matrix(x):
     sq_dist = ((x.view(b, 1, c) - x.view(1, b, c)) ** 2).sum(-1)
     return sq_dist
 
-def get_laplacian(weights):
-    # According to the paper, normalized laplacian might work better
-    isqrt_diag = 1.0 / torch.sqrt(1e-4 + torch.sum(weights, dim=-1))
-    # checknan(laplacian=isqrt_diag)
-    S = weights * isqrt_diag[None, :] * isqrt_diag[:, None]
-    return S
+def get_laplacian(weights, normalized=True):
+    if normalized:
+        # According to the paper, normalized laplacian might work better
+        isqrt_diag = 1.0 / torch.sqrt(1e-4 + torch.sum(weights, dim=-1))
+        # checknan(laplacian=isqrt_diag)
+        S = weights * isqrt_diag[None, :] * isqrt_diag[:, None]
+        return torch.eye(weights.shape[0], device=weights.device) - S
+    else:
+        return torch.diag(weights.sum(dim=-1)) - weights
 
 
 def embedding_propagation(x, alpha, rbf_scale, norm_prop, propagator=None):
