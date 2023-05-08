@@ -27,7 +27,7 @@ from solo.losses.swav import swav_loss_func
 from solo.methods.base import BaseMethod
 from solo.utils.misc import omegaconf_select
 from solo.utils.sinkhorn_knopp import SinkhornKnopp
-
+from solo.losses.manifold_regularizer import manifold_regularizer_loss
 
 class SwAV(BaseMethod):
     def __init__(self, cfg: omegaconf.DictConfig):
@@ -55,6 +55,7 @@ class SwAV(BaseMethod):
         self.queue_size: int = cfg.method_kwargs.queue_size
         self.epoch_queue_starts: int = cfg.method_kwargs.epoch_queue_starts
         self.freeze_prototypes_epochs: int = cfg.method_kwargs.freeze_prototypes_epochs
+        self.regularizer_weight = cfg.method_kwargs.regularizer_weight
 
         proj_hidden_dim: int = cfg.method_kwargs.proj_hidden_dim
         proj_output_dim: int = cfg.method_kwargs.proj_output_dim
@@ -110,7 +111,9 @@ class SwAV(BaseMethod):
             "method_kwargs.epoch_queue_starts",
             15,
         )
-
+        cfg.method_kwargs.regularizer_weight = omegaconf_select(
+            cfg, "method_kwargs.regularizer_weight", 0.0
+        )
         return cfg
 
     @property
@@ -219,6 +222,7 @@ class SwAV(BaseMethod):
         out = super().training_step(batch, batch_idx)
         class_loss = out["loss"]
         preds = out["p"]
+        regularizer_loss, collapse_loss = manifold_regularizer_loss(torch.cat(out["p"]), torch.cat(out["z"]))
 
         # ------- swav loss -------
         assignments = self.get_assignments(preds[: self.num_large_crops])
@@ -231,8 +235,11 @@ class SwAV(BaseMethod):
             self.queue[:, : z.size(1)] = z.detach()
 
         self.log("train_swav_loss", swav_loss, on_epoch=True, sync_dist=True)
-
-        return swav_loss + class_loss
+        self.log("regularizer_loss", regularizer_loss, on_epoch=True, sync_dist=True)
+        self.log("collapse_loss", collapse_loss, on_epoch=True, sync_dist=True)
+        print(regularizer_loss)
+        print(collapse_loss)
+        return swav_loss + class_loss + regularizer_loss * self.regularizer_weight
 
     def on_after_backward(self):
         """Zeroes the gradients of the prototypes."""

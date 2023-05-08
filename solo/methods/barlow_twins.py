@@ -25,7 +25,7 @@ import torch.nn as nn
 from solo.losses.barlow import barlow_loss_func
 from solo.methods.base import BaseMethod
 from solo.utils.misc import omegaconf_select
-
+from solo.losses.manifold_regularizer import manifold_regularizer_loss
 
 class BarlowTwins(BaseMethod):
     def __init__(self, cfg: omegaconf.DictConfig):
@@ -43,6 +43,7 @@ class BarlowTwins(BaseMethod):
 
         self.lamb: float = cfg.method_kwargs.lamb
         self.scale_loss: float = cfg.method_kwargs.scale_loss
+        self.regularizer_weight = cfg.method_kwargs.regularizer_weight
 
         proj_hidden_dim: int = cfg.method_kwargs.proj_hidden_dim
         proj_output_dim: int = cfg.method_kwargs.proj_output_dim
@@ -76,7 +77,9 @@ class BarlowTwins(BaseMethod):
 
         cfg.method_kwargs.lamb = omegaconf_select(cfg, "method_kwargs.lamb", 0.0051)
         cfg.method_kwargs.scale_loss = omegaconf_select(cfg, "method_kwargs.scale_loss", 0.024)
-
+        cfg.method_kwargs.regularizer_weight = omegaconf_select(
+            cfg, "method_kwargs.regularizer_weight", 0.0
+        )
         return cfg
 
     @property
@@ -120,10 +123,13 @@ class BarlowTwins(BaseMethod):
         out = super().training_step(batch, batch_idx)
         class_loss = out["loss"]
         z1, z2 = out["z"]
-
+        regularizer_loss, collapse_loss = manifold_regularizer_loss(torch.cat(out["feats"]), torch.cat(out["z"]))
         # ------- barlow twins loss -------
         barlow_loss = barlow_loss_func(z1, z2, lamb=self.lamb, scale_loss=self.scale_loss)
 
         self.log("train_barlow_loss", barlow_loss, on_epoch=True, sync_dist=True)
-
-        return barlow_loss + class_loss
+        self.log("regularizer_loss", regularizer_loss, on_epoch=True, sync_dist=True)
+        self.log("collapse_loss", collapse_loss, on_epoch=True, sync_dist=True)
+        print(regularizer_loss)
+        print(collapse_loss)
+        return barlow_loss + class_loss + regularizer_loss * self.regularizer_weight
