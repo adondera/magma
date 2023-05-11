@@ -222,7 +222,7 @@ class SwAV(BaseMethod):
         out = super().training_step(batch, batch_idx)
         class_loss = out["loss"]
         preds = out["p"]
-        regularizer_loss, collapse_loss = manifold_regularizer_loss(torch.cat(out["p"]), torch.cat(out["z"]))
+        regularizer_loss, collapse_loss = manifold_regularizer_loss(torch.cat(out["z"]), torch.cat(out["p"]))
 
         # ------- swav loss -------
         assignments = self.get_assignments(preds[: self.num_large_crops])
