@@ -46,6 +46,7 @@ class TA_BarlowTwins(BaseMethod):
 
         self.lamb: float = cfg.method_kwargs.lamb
         self.scale_loss: float = cfg.method_kwargs.scale_loss
+        self.regularizer_weight = cfg.method_kwargs.regularizer_weight
 
         proj_hidden_dim: int = cfg.method_kwargs.proj_hidden_dim
         proj_output_dim: int = cfg.method_kwargs.proj_output_dim
@@ -68,15 +69,15 @@ class TA_BarlowTwins(BaseMethod):
         )
 
         # TODO: Add a number of hidden layers param to TA?
-        # self.ta = TA_Attention(
-        #     value_dim=value_dim,
-        #     query_dim=query_dim,
-        #     input_dim=proj_output_dim,
-        #     num_heads=num_heads,
-        #     attn_dropout=attn_dropout,
-        #     proj_dropout=proj_dropout,
-        #     hidden_dim=qkv_hidden_dim,
-        # )
+        self.ta = TA_Attention(
+            value_dim=value_dim,
+            query_dim=query_dim,
+            input_dim=proj_output_dim,
+            num_heads=num_heads,
+            attn_dropout=attn_dropout,
+            proj_dropout=proj_dropout,
+            hidden_dim=qkv_hidden_dim,
+        )
         # self.ta.qkv_transform = nn.Sequential(
         #     nn.Linear(self.features_dim, proj_hidden_dim),
         #     nn.BatchNorm1d(proj_hidden_dim),
@@ -119,6 +120,7 @@ class TA_BarlowTwins(BaseMethod):
         cfg.method_kwargs.value_dim = omegaconf_select(
             cfg, "method_kwargs.value_dim", cfg.method_kwargs.proj_output_dim
         )
+        cfg.method_kwargs.regularizer_weight = omegaconf_select(cfg, "method_kwargs.regularizer_weight", 0.0)
 
         return cfg
 
@@ -132,7 +134,7 @@ class TA_BarlowTwins(BaseMethod):
 
         extra_learnable_params = [
             {"name": "projector", "params": self.projector.parameters()},
-            # {"name": "ta", "params": self.ta.parameters()},
+            {"name": "ta", "params": self.ta.parameters()},
         ]
         return super().learnable_params + extra_learnable_params
 
@@ -166,29 +168,63 @@ class TA_BarlowTwins(BaseMethod):
         out = super().training_step(batch, batch_idx)
         class_loss = out["loss"]
         z1, z2 = out["z"]
-        b, c = z1.shape
+        # b, c = z1.shape
 
-        all_z = torch.cat([z1, z2])
-        all_z = embedding_propagation(all_z, alpha=0.5, rbf_scale=1.0, norm_prop=False)
+        query1, key1, value1 = self.ta(z1)
+        query2, key2, value2 = self.ta(z2)
 
-        z1 = all_z[:b]
-        z2 = all_z[b:]
+        key_pool = torch.cat([key1, key2], dim=1)
+        value_pool = torch.cat([value1, value2], dim=1)
+
+        residual1, attn_weights1 = self.ta.attention(query1, key_pool, value_pool)
+        residual2, attn_weights2 = self.ta.attention(query2, key_pool, value_pool)
+
+        z1 = z1 + residual1
+        z2 = z2 + residual2
+
+        # all_z = torch.cat([z1, z2])
+        # all_z = embedding_propagation(all_z, alpha=0.5, rbf_scale=1.0, norm_prop=False)
+
+        # z1 = all_z[:b]
+        # z2 = all_z[b:]
 
         # ------- barlow twins loss -------
         barlow_loss = barlow_loss_func(
             z1, z2, lamb=self.lamb, scale_loss=self.scale_loss
         )
+        barlow_loss_residual = barlow_loss_func(
+            residual1, residual2, lamb=self.lamb, scale_loss=self.scale_loss
+        )
+        barlow_loss_residual *= self.regularizer_weight
 
         # TODO: Check that these metrics are computed correctly
         with torch.no_grad():
             z_std = F.normalize(torch.stack([z1, z2]), dim=-1).std(dim=1).mean()
             z_unnormalized_std = torch.stack([z1, z2]).std(dim=1).mean()
-            residual_unnormalized_std = torch.stack([z1, z2]).std(dim=1).mean()
-            residual_std = F.normalize(torch.stack([z1, z2]), dim=-1).std(dim=1).mean()
+            residual_unnormalized_std = torch.stack([residual1, residual2]).std(dim=1).mean()
+            residual_std = F.normalize(torch.stack([residual1, residual2]), dim=-1).std(dim=1).mean()
             ta_svd_entropy = (
                 torch.special.entr(
                     F.normalize(
                         torch.linalg.svdvals(torch.stack([z1, z2]).float()),
+                        dim=1,
+                        p=1.0,
+                    )
+                )
+                .sum(dim=-1)
+                .mean()
+            )
+            attention_entropy = (
+                torch.special.entr(torch.stack([attn_weights1, attn_weights2]))
+                .sum(dim=-1)
+                .mean()
+            )
+            residual_svd_entropy = (
+                torch.special.entr(
+                    F.normalize(
+                        torch.linalg.svdvals(
+                            torch.stack([z1, z2]).float()
+                        ),
                         dim=1,
                         p=1.0,
                     )
@@ -204,7 +240,10 @@ class TA_BarlowTwins(BaseMethod):
             "train_residual_std": residual_std,
             "train_residual_unnormalized_std": residual_unnormalized_std,
             "ta_svd_entropy": ta_svd_entropy,
+            "attention_entropy": attention_entropy,
+            "residual_svd_entropy": residual_svd_entropy,
+            "train_residual_barlow_loss": barlow_loss_residual,
         }
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
 
-        return barlow_loss + class_loss
+        return barlow_loss + class_loss + barlow_loss_residual
