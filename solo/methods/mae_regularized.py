@@ -274,10 +274,11 @@ class MAE_REG(BaseMethod):
         for number, _ in enumerate(self.backbone.blocks):
             regularizer_loss += manifold_regularizer_loss(out[f'mean_block_{number}'][0], out['feats'][0])
         regularizer_loss /= len(self.backbone.blocks)
+        regularizer_loss *= self.regularizer_weight
         metrics = {
             "train_reconstruction_loss": reconstruction_loss,
             "train_regularization_loss": regularizer_loss,
         }
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
 
-        return reconstruction_loss + class_loss + regularizer_loss * self.regularizer_weight
+        return reconstruction_loss + class_loss + regularizer_loss
