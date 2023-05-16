@@ -36,12 +36,12 @@ class TA_Attention(nn.Module):
                 nn.ReLU(),
             )
             if hidden_dim
-            else nn.Sequential(
-                nn.Linear(input_dim, query_dim * 2 + value_dim, bias=bias), nn.BatchNorm1d(query_dim * 2 + value_dim), nn.ReLU()
-            )
+            else 
+                nn.Linear(input_dim, query_dim * 2 + value_dim, bias=bias)
+            
         )
         self.attn_dropout = nn.Dropout(attn_dropout)
-        self.proj = nn.Sequential(nn.Linear(value_dim, value_dim), nn.BatchNorm1d(value_dim), nn.ReLU())
+        self.proj = nn.Linear(value_dim, value_dim)
         self.proj_dropout = nn.Dropout(proj_dropout)
         # self.ffn = nn.Sequential(
         #     nn.Linear(dim, dim // 2),
