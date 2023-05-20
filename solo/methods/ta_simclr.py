@@ -177,7 +177,7 @@ class TA_SimCLR(BaseMethod):
         z = torch.cat(out["z"])
         queries, keys, values = self.ta(z)
         residual, attn_weights = self.ta.attention(queries, keys, values)
-        regularizer_loss, collapse_loss = manifold_regularizer_loss(z, residual)
+        regularizer_loss = manifold_regularizer_loss(z, residual)
         z = z + residual
 
         # regularizer_loss = self.koleo(residual) * self.regularizer_weight
@@ -208,9 +208,9 @@ class TA_SimCLR(BaseMethod):
             "train_z_unnormalized_std": unnormalized_z_std,
             "attention_entropy": attention_entropy,
             "regularizer_loss": regularizer_loss,
-            "collapse_loss": collapse_loss,
+            # "collapse_loss": collapse_loss,
         }
 
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
 
-        return nce_loss + class_loss + regularizer_loss * self.regularizer_weight + collapse_loss
+        return nce_loss + class_loss + regularizer_loss * self.regularizer_weight #+ collapse_loss
