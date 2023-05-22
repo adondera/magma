@@ -198,7 +198,7 @@ class BYOLWithTA(BaseMomentumMethod):
         out = super().training_step(batch, batch_idx)
 
         neg_cos_sim = 0
-        barlow_residual_loss = 0
+        # barlow_residual_loss = 0
 
         ta_output = []
         residuals = []
@@ -235,7 +235,7 @@ class BYOLWithTA(BaseMomentumMethod):
                 p = self.predictor(z)
 
                 neg_cos_sim += byol_loss_func(p, momentum_z)
-                barlow_residual_loss += barlow_loss_func(z, momentum_z.detach(), lamb=0.0051, scale_loss=0.1)
+                # barlow_residual_loss += barlow_loss_func(z, momentum_z.detach(), lamb=0.0051, scale_loss=0.1)
                 # b, c = z.shape
                 # all_z = torch.cat([z, momentum_z])
                 # all_z = embedding_propagation(all_z, alpha=0.5, rbf_scale=1.0, norm_prop=False)
@@ -243,7 +243,7 @@ class BYOLWithTA(BaseMomentumMethod):
                 # z = all_z[:b]
                 # momentum_z = all_z[b:]
 
-        barlow_residual_loss *= self.regularizer_weight
+        # barlow_residual_loss *= self.regularizer_weight
         class_loss = out["loss"]
 
         with torch.no_grad():
@@ -289,7 +289,7 @@ class BYOLWithTA(BaseMomentumMethod):
 
         metrics = {
             "train_neg_cos_sim": neg_cos_sim,
-            "train_barlow_residual_loss": barlow_residual_loss,
+            # "train_barlow_residual_loss": barlow_residual_loss,
             "train_z_unnormalized_std": z_unnormalized_std,
             "train_z_std": z_std,
             "train_residual_std": residual_std,
@@ -300,4 +300,4 @@ class BYOLWithTA(BaseMomentumMethod):
         }
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
 
-        return neg_cos_sim + class_loss + barlow_residual_loss
+        return neg_cos_sim + class_loss #+ barlow_residual_loss
