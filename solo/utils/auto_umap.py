@@ -230,7 +230,6 @@ class AutoUMAP(Callback):
             self.plot_umap(data, Y, trainer, "validation_umap", num_classes)
             self.plot_umap(projector_features, Y, trainer, "projector_umap", num_classes)
             self.plot_umap(ta_features, Y, trainer, "ta_umap", num_classes)
-            exit()
 
     def on_validation_end(self, trainer: pl.Trainer, module: pl.LightningModule):
         """Tries to generate an up-to-date UMAP visualization of the features
