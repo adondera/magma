@@ -196,7 +196,10 @@ class AutoUMAP(Callback):
 
                 feats = module(x)["feats"]
                 z = module.projector(feats)
-                queries, keys, values = module.ta(z)
+                try:
+                    queries, keys, values = module.ta(z)
+                except:
+                    queries, keys, values = module.student_TA(z)
                 residual, _ = module.ta.attention(queries, keys, values)
                 # TODO: This now needs to change depending on how we want things
                 ta_output = z + residual
