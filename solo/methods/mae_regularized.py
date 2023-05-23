@@ -276,7 +276,7 @@ class MAE_REG(BaseMethod):
         reconstruction_loss /= self.num_large_crops
         for layer in self.layers:
             regularizer_loss += manifold_regularizer_loss(out[f'mean_block_{layer}'][0], out['feats'][0])
-        regularizer_loss /= len(self.backbone.blocks)
+        regularizer_loss /= len(self.layers)
         regularizer_loss *= self.regularizer_weight
         metrics = {
             "train_reconstruction_loss": reconstruction_loss,
