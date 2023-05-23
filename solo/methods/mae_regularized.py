@@ -284,4 +284,7 @@ class MAE_REG(BaseMethod):
         }
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
 
-        return reconstruction_loss + class_loss + regularizer_loss
+        if self.current_epoch < 50:
+            return reconstruction_loss + class_loss
+        else:
+            return reconstruction_loss + class_loss + regularizer_loss
