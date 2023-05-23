@@ -143,6 +143,7 @@ class MAE_REG(BaseMethod):
         self.mask_ratio: float = cfg.method_kwargs.mask_ratio
         self.norm_pix_loss: bool = cfg.method_kwargs.norm_pix_loss
         self.regularizer_weight = cfg.method_kwargs.regularizer_weight
+        self.layers = cfg.method_kwargs.layers
 
         # gather backbone info from timm
         self._vit_embed_dim: int = self.backbone.pos_embed.size(-1)
@@ -190,6 +191,7 @@ class MAE_REG(BaseMethod):
             False,
         )
         cfg.method_kwargs.regularizer_weight = omegaconf_select(cfg, "method_kwargs.regularizer_weight", 0.0)
+        cfg.method_kwargs.layers = omegaconf_select(cfg, "method_kwargs.layers", [])
 
         return cfg
 
@@ -224,8 +226,9 @@ class MAE_REG(BaseMethod):
         handles = []
         for number, block in enumerate(self.backbone.blocks):
             def hook_fn(module, input, output, number=number):
-                mean_token_representation = output[:, 1:, :].mean(dim=1)
-                out.update({f"mean_block_{number}": mean_token_representation})
+                if number in self.layers:
+                    mean_token_representation = output[:, 1:, :].mean(dim=1)
+                    out.update({f"mean_block_{number}": mean_token_representation})
             handle = block.register_forward_hook(hook_fn)
             handles.append(handle)
 
@@ -271,8 +274,8 @@ class MAE_REG(BaseMethod):
                 norm_pix_loss=self.norm_pix_loss,
             )
         reconstruction_loss /= self.num_large_crops
-        for number, _ in enumerate(self.backbone.blocks):
-            regularizer_loss += manifold_regularizer_loss(out[f'mean_block_{number}'][0], out['feats'][0])
+        for layer in self.layers:
+            regularizer_loss += manifold_regularizer_loss(out[f'mean_block_{layer}'][0], out['feats'][0])
         regularizer_loss /= len(self.backbone.blocks)
         regularizer_loss *= self.regularizer_weight
         metrics = {
