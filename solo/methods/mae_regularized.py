@@ -275,8 +275,10 @@ class MAE_REG(BaseMethod):
                 norm_pix_loss=self.norm_pix_loss,
             )
         reconstruction_loss /= self.num_large_crops
+        last_block_number = len(self.backbone.blocks) - 1
         for layer in self.layers:
-            regularizer_loss += manifold_regularizer_loss(out[f'mean_block_{layer}'][0], out['feats'][0])
+            if layer != last_block_number:
+                regularizer_loss += manifold_regularizer_loss(out[f'mean_block_{layer}'][0], out[f'mean_block_{last_block_number}'][0])
         regularizer_loss /= len(self.layers)
         regularizer_loss *= self.regularizer_weight
         metrics = {
