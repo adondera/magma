@@ -41,7 +41,11 @@ class TA_Attention(nn.Module):
             
         )
         self.attn_dropout = nn.Dropout(attn_dropout)
-        self.proj = nn.Linear(value_dim, value_dim)
+        self.proj = nn.Sequential(
+                nn.Linear(value_dim, value_dim),
+                nn.BatchNorm1d(value_dim),
+                nn.ReLU(),
+            )
         self.proj_dropout = nn.Dropout(proj_dropout)
         # self.ffn = nn.Sequential(
         #     nn.Linear(dim, dim // 2),
