@@ -229,6 +229,7 @@ class MAE_REG(BaseMethod):
                 if number in self.layers:
                     mean_token_representation = output[:, 1:, :].mean(dim=1)
                     out.update({f"mean_block_{number}": mean_token_representation})
+                    out.update({f"cls_block_{number}": output[:, 0, :]})
             handle = block.register_forward_hook(hook_fn)
             handles.append(handle)
 
@@ -282,6 +283,8 @@ class MAE_REG(BaseMethod):
             "train_reconstruction_loss": reconstruction_loss,
             "train_regularization_loss": regularizer_loss,
         }
+        for layer in self.layers:
+            metrics.update({f"standard_deviation_cls_{layer}": out[f"cls_block_{layer}"][0].std(dim=0).mean()})
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
 
         if self.current_epoch < 50:
