@@ -280,10 +280,11 @@ class MAE_REG(BaseMethod):
             if layer != last_block_number:
                 regularizer_loss += manifold_regularizer_loss(out[f'mean_block_{layer}'][0], out[f'mean_block_{last_block_number}'][0])
         regularizer_loss /= len(self.layers)
-        regularizer_loss *= self.regularizer_weight
+        regularizer_loss_scaled = regularizer_loss * self.regularizer_weight * self.current_epoch / 250
         metrics = {
             "train_reconstruction_loss": reconstruction_loss,
             "train_regularization_loss": regularizer_loss,
+            "train_regularization_loss_scaled": regularizer_loss_scaled,
         }
         # for layer in self.layers:
         #     metrics.update({f"standard_deviation_cls_{layer}": out[f"cls_block_{layer}"][0].std(dim=0).mean()})
@@ -292,4 +293,4 @@ class MAE_REG(BaseMethod):
         # if self.current_epoch < 50:
         #     return reconstruction_loss + class_loss
         # else:
-        return reconstruction_loss + class_loss + regularizer_loss
+        return reconstruction_loss + class_loss + regularizer_loss_scaled
