@@ -15,6 +15,9 @@ wandb*/
 # umap dir
 auto_umap/
 
+# scripts dir
+scripts/
+
 # datasets dir
 datasets/
 # saved models
