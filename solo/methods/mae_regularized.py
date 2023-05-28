@@ -227,9 +227,9 @@ class MAE_REG(BaseMethod):
         for number, block in enumerate(self.backbone.blocks):
             def hook_fn(module, input, output, number=number):
                 if number in self.layers:
-                    mean_token_representation = output.mean(dim=1)
+                    mean_token_representation = output[:, 1:, :].mean(dim=1)
                     out.update({f"mean_block_{number}": mean_token_representation})
-                    # out.update({f"cls_block_{number}": output[:, 0, :]})
+                    out.update({f"cls_block_{number}": output[:, 0, :]})
             handle = block.register_forward_hook(hook_fn)
             handles.append(handle)
 
@@ -280,17 +280,17 @@ class MAE_REG(BaseMethod):
             if layer != last_block_number:
                 regularizer_loss += manifold_regularizer_loss(out[f'mean_block_{layer}'][0], out[f'mean_block_{last_block_number}'][0])
         regularizer_loss /= len(self.layers)
-        regularizer_loss_scaled = regularizer_loss * self.regularizer_weight * self.current_epoch / 250
+        regularizer_loss_scaled = regularizer_loss * self.regularizer_weight * max((self.current_epoch-50) / 250, 0) 
         metrics = {
             "train_reconstruction_loss": reconstruction_loss,
             "train_regularization_loss": regularizer_loss,
-            "train_regularization_loss_scaled": regularizer_loss_scaled,
+	        "train_regularization_loss_scaled": regularizer_loss_scaled,
         }
-        # for layer in self.layers:
-        #     metrics.update({f"standard_deviation_cls_{layer}": out[f"cls_block_{layer}"][0].std(dim=0).mean()})
+        for layer in self.layers:
+            metrics.update({f"standard_deviation_cls_{layer}": out[f"cls_block_{layer}"][0].std(dim=0).mean()})
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
 
-        # if self.current_epoch < 50:
-        #     return reconstruction_loss + class_loss
-        # else:
-        return reconstruction_loss + class_loss + regularizer_loss_scaled
+        if self.current_epoch < 50:
+            return reconstruction_loss + class_loss
+        else:
+            return reconstruction_loss + class_loss + regularizer_loss_scaled
