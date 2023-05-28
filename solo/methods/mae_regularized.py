@@ -143,6 +143,7 @@ class MAE_REG(BaseMethod):
         self.mask_ratio: float = cfg.method_kwargs.mask_ratio
         self.norm_pix_loss: bool = cfg.method_kwargs.norm_pix_loss
         self.regularizer_weight = cfg.method_kwargs.regularizer_weight
+        self.warmup_epochs = cfg.method_kwargs.warmup_epochs
         self.layers = cfg.method_kwargs.layers
 
         # gather backbone info from timm
@@ -192,6 +193,7 @@ class MAE_REG(BaseMethod):
         )
         cfg.method_kwargs.regularizer_weight = omegaconf_select(cfg, "method_kwargs.regularizer_weight", 0.0)
         cfg.method_kwargs.layers = omegaconf_select(cfg, "method_kwargs.layers", [])
+        cfg.method_kwargs.warmup_epochs = omegaconf_select(cfg, "method_kwargs.warmup_epochs", 0)
 
         return cfg
 
@@ -279,8 +281,11 @@ class MAE_REG(BaseMethod):
         for layer in self.layers:
             if layer != last_block_number:
                 regularizer_loss += manifold_regularizer_loss(out[f'mean_block_{layer}'][0], out[f'mean_block_{last_block_number}'][0])
-        regularizer_loss /= len(self.layers)
-        regularizer_loss_scaled = regularizer_loss * self.regularizer_weight * max((self.current_epoch-50) / 250, 0) 
+        
+        # Divide loss by the number of terms in the regularization loss
+        regularizer_loss /= (len(self.layers) - 1)
+        regularizer_loss_scaled = regularizer_loss * self.regularizer_weight * max((self.current_epoch-self.warmup_epochs) / 250, 0) 
+        
         metrics = {
             "train_reconstruction_loss": reconstruction_loss,
             "train_regularization_loss": regularizer_loss,
@@ -290,7 +295,7 @@ class MAE_REG(BaseMethod):
             metrics.update({f"standard_deviation_cls_{layer}": out[f"cls_block_{layer}"][0].std(dim=0).mean()})
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
 
-        if self.current_epoch < 50:
+        if self.current_epoch < self.warmup_epochs:
             return reconstruction_loss + class_loss
         else:
             return reconstruction_loss + class_loss + regularizer_loss_scaled
