@@ -228,10 +228,9 @@ class MAE_REG(BaseMethod):
         handles = []
         for number, block in enumerate(self.backbone.blocks):
             def hook_fn(module, input, output, number=number):
-                if number in self.layers:
-                    mean_token_representation = output[:, 1:, :].mean(dim=1)
-                    out.update({f"mean_block_{number}": mean_token_representation})
-                    out.update({f"cls_block_{number}": output[:, 0, :]})
+                mean_token_representation = output[:, 1:, :].mean(dim=1)
+                out.update({f"mean_block_{number}": mean_token_representation})
+                out.update({f"cls_block_{number}": output[:, 0, :]})
             handle = block.register_forward_hook(hook_fn)
             handles.append(handle)
 
@@ -284,15 +283,18 @@ class MAE_REG(BaseMethod):
         
         # Divide loss by the number of terms in the regularization loss
         regularizer_loss /= (len(self.layers) - 1)
-        regularizer_loss_scaled = regularizer_loss * self.regularizer_weight * max((self.current_epoch-self.warmup_epochs) / 250, 0) 
+
+        # TODO: Change the hardcoded 250
+        linear_scheduler = max((self.current_epoch-self.warmup_epochs) / 250, 0)
+        regularizer_loss_scaled = regularizer_loss * self.regularizer_weight * linear_scheduler
         
         metrics = {
             "train_reconstruction_loss": reconstruction_loss,
             "train_regularization_loss": regularizer_loss,
 	        "train_regularization_loss_scaled": regularizer_loss_scaled,
         }
-        for layer in self.layers:
-            metrics.update({f"standard_deviation_cls_{layer}": out[f"cls_block_{layer}"][0].std(dim=0).mean()})
+        for number, _ in enumerate(self.backbone.blocks):
+            metrics.update({f"standard_deviation_cls_{number}": out[f"cls_block_{number}"][0].std(dim=0).mean()})
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
 
         if self.current_epoch < self.warmup_epochs:
