@@ -4,6 +4,10 @@
 .ipynb_checkpoints
 *.ipynb
 
+# images
+*.png
+*.gif
+
 # tensorboard dir
 runs/
 

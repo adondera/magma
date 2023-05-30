@@ -528,7 +528,7 @@ class BaseMethod(pl.LightningModule):
         if self.knn_eval:
             targets = targets.repeat(self.num_large_crops)
             mask = targets != -1
-            self.knn(
+            self.knn.update(
                 train_features=torch.cat(outs["feats"][: self.num_large_crops])[mask].detach(),
                 train_targets=targets[mask],
             )
@@ -571,7 +571,7 @@ class BaseMethod(pl.LightningModule):
         out = self.base_validation_step(X, targets)
 
         if self.knn_eval and not self.trainer.sanity_checking:
-            self.knn(test_features=out.pop("feats").detach(), test_targets=targets.detach())
+            self.knn.update(test_features=out.pop("feats").detach(), test_targets=targets.detach())
 
         metrics = {
             "batch_size": batch_size,
