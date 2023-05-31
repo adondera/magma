@@ -292,6 +292,7 @@ class MAE_REG(BaseMethod):
             "train_reconstruction_loss": reconstruction_loss,
             "train_regularization_loss": regularizer_loss,
 	        "train_regularization_loss_scaled": regularizer_loss_scaled,
+            "train_regularizer_weight": self.regularizer_weight * linear_scheduler,
         }
         for number, _ in enumerate(self.backbone.blocks):
             metrics.update({f"standard_deviation_cls_{number}": out[f"cls_block_{number}"][0].std(dim=0).mean()})
