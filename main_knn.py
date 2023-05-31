@@ -26,6 +26,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+from omegaconf import OmegaConf
 
 from solo.args.knn import parse_args_knn
 from solo.data.classification_dataloader import (
@@ -56,11 +57,13 @@ def extract_features(loader: DataLoader, model: nn.Module) -> Tuple[torch.Tensor
         lab = lab.cuda(non_blocking=True)
         outs = model(im)
         backbone_features.append(outs["feats"].detach())
-        proj_features.append(outs["z"])
+        if "z" in outs:
+            proj_features.append(outs["z"])
         labels.append(lab)
     model.train()
     backbone_features = torch.cat(backbone_features)
-    proj_features = torch.cat(proj_features)
+    if proj_features:
+        proj_features = torch.cat(proj_features)
     labels = torch.cat(labels)
     return backbone_features, proj_features, labels
 
@@ -121,7 +124,9 @@ def main():
     # build paths
     ckpt_dir = Path(args.pretrained_checkpoint_dir)
     args_path = ckpt_dir / "args.json"
-    ckpt_path = [ckpt_dir / ckpt for ckpt in os.listdir(ckpt_dir) if ckpt.endswith(".ckpt")][0]
+    ckpt_path = [
+        ckpt_dir / ckpt for ckpt in os.listdir(ckpt_dir) if ckpt.endswith(".ckpt")
+    ][0]
 
     # load arguments
     with open(args_path) as f:
@@ -129,7 +134,7 @@ def main():
 
     # build the model
     model = METHODS[method_args["method"]].load_from_checkpoint(
-        ckpt_path, strict=False, **method_args
+        ckpt_path, strict=False, cfg=OmegaConf.create(method_args)
     )
     model.cuda()
 
@@ -151,11 +156,15 @@ def main():
     )
 
     # extract train features
-    train_features_bb, train_features_proj, train_targets = extract_features(train_loader, model)
+    train_features_bb, train_features_proj, train_targets = extract_features(
+        train_loader, model
+    )
     train_features = {"backbone": train_features_bb, "projector": train_features_proj}
 
     # extract test features
-    test_features_bb, test_features_proj, test_targets = extract_features(val_loader, model)
+    test_features_bb, test_features_proj, test_targets = extract_features(
+        val_loader, model
+    )
     test_features = {"backbone": test_features_bb, "projector": test_features_proj}
 
     # run k-nn for all possible combinations of parameters
@@ -166,7 +175,9 @@ def main():
                 temperatures = args.temperature if distance_fx == "cosine" else [None]
                 for T in temperatures:
                     print("---")
-                    print(f"Running k-NN with params: distance_fx={distance_fx}, k={k}, T={T}...")
+                    print(
+                        f"Running k-NN with params: distance_fx={distance_fx}, k={k}, T={T}..."
+                    )
                     acc1, acc5 = run_knn(
                         train_features=train_features[feat_type],
                         train_targets=train_targets,
