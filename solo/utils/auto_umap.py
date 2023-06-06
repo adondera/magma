@@ -37,6 +37,7 @@ from omegaconf import DictConfig
 from pytorch_lightning.callbacks import Callback
 from solo.utils.misc import gather, omegaconf_select
 from tqdm import tqdm
+from sklearn import metrics
 
 class AutoUMAP(Callback):
     def __init__(
@@ -182,7 +183,7 @@ class AutoUMAP(Callback):
         """
 
         device = module.device
-        data = []
+        backbone_features = []
         projector_features = []
         ta_features = []
         Y = []
@@ -203,32 +204,62 @@ class AutoUMAP(Callback):
                     queries, keys, values = module.student_TA(z)
                     residual, _ = module.student_TA.attention(queries, keys, values)
                 # TODO: This now needs to change depending on how we want things
-                ta_output = z + residual
+                ta_output = residual
 
                 feats = gather(feats)
                 z = gather(z)
                 ta_output = gather(ta_output)
                 y = gather(y)
 
-                data.append(feats.cpu())
+                backbone_features.append(feats.cpu())
                 projector_features.append(z.cpu())
                 ta_features.append(ta_output.cpu())
                 Y.append(y.cpu())
         module.train()
 
-        if trainer.is_global_zero and len(data):
-            data = torch.cat(data, dim=0).numpy()
+        if trainer.is_global_zero and len(backbone_features):
+            backbone_features = torch.cat(backbone_features, dim=0).numpy()
             projector_features = torch.cat(projector_features, dim=0).numpy()
             ta_features = torch.cat(ta_features, dim=0).numpy()
             Y = torch.cat(Y, dim=0)
             num_classes = len(torch.unique(Y))
             Y = Y.numpy()
 
-            data = umap.UMAP(n_components=2).fit_transform(data)
+            backbone_features = umap.UMAP(n_components=2).fit_transform(backbone_features)
             projector_features = umap.UMAP(n_components=2).fit_transform(projector_features)
             ta_features = umap.UMAP(n_components=2).fit_transform(ta_features)
 
-            self.plot_umap(data, Y, trainer, "validation_umap", num_classes)
+            silhouette_score_backbone = metrics.silhouette_score(backbone_features, Y)
+            silhouette_score_projector = metrics.silhouette_score(projector_features, Y)
+            silhouette_score_ta = metrics.silhouette_score(ta_features, Y)
+
+            chi_backbone = metrics.calinski_harabasz_score(backbone_features, Y)
+            chi_projector = metrics.calinski_harabasz_score(projector_features, Y)
+            chi_ta = metrics.calinski_harabasz_score(ta_features, Y)
+
+            dbi_backbone = metrics.davies_bouldin_score(backbone_features, Y)
+            dbi_projector = metrics.davies_bouldin_score(projector_features, Y)
+            dbi_ta = metrics.davies_bouldin_score(ta_features, Y)
+
+            metrics_dict = {
+                "backbone_silhouette_score": silhouette_score_backbone,
+                "projector_silhouette_score": silhouette_score_projector,
+                "ta_silhouette_score": silhouette_score_ta,
+                "backbone_calinski_harabasz_score": chi_backbone,
+                "projector_calinski_harabasz_score": chi_projector,
+                "ta_calinski_harabasz_score": chi_ta,
+                "backbone_davies_bouldin_score": dbi_backbone,
+                "projector_davies_bouldin_score": dbi_projector,
+                "ta_davies_bouldin_score": dbi_ta,
+            }
+
+            if isinstance(trainer.logger, pl.loggers.WandbLogger):
+                wandb.log(
+                    metrics_dict,
+                    commit=False,
+                )
+
+            self.plot_umap(backbone_features, Y, trainer, "validation_umap", num_classes)
             self.plot_umap(projector_features, Y, trainer, "projector_umap", num_classes)
             self.plot_umap(ta_features, Y, trainer, "ta_umap", num_classes)
 
