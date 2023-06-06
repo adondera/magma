@@ -51,7 +51,6 @@ from solo.backbones import (
     wide_resnet28w8,
 )
 from solo.utils.knn import WeightedKNNClassifier
-from solo.utils.cluster_metrics import ClusterEmbeddings
 from solo.utils.lars import LARS
 from solo.utils.metrics import accuracy_at_k, weighted_mean
 from solo.utils.misc import omegaconf_select, remove_bias_and_norm_from_weight_decay
@@ -254,10 +253,6 @@ class BaseMethod(pl.LightningModule):
         self.knn_k: int = cfg.knn_eval.k
         if self.knn_eval:
             self.knn = WeightedKNNClassifier(k=self.knn_k, distance_fx=cfg.knn_eval.distance_func)
-
-        self.cluster_eval: bool = cfg.cluster_eval.enabled
-        if self.cluster_eval:
-            self.cluster = ClusterEmbeddings()
 
         # for performance
         self.no_channel_last = cfg.performance.disable_channel_last
@@ -530,16 +525,11 @@ class BaseMethod(pl.LightningModule):
 
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
 
-        if self.knn_eval or self.cluster_eval:
+        if self.knn_eval:
             targets = targets.repeat(self.num_large_crops)
             mask = targets != -1
             if self.knn_eval:
                 self.knn.update(
-                    train_features=torch.cat(outs["feats"][: self.num_large_crops])[mask].detach(),
-                    train_targets=targets[mask],
-                )
-            if self.cluster_eval:
-                self.cluster.update(
                     train_features=torch.cat(outs["feats"][: self.num_large_crops])[mask].detach(),
                     train_targets=targets[mask],
                 )
@@ -583,9 +573,6 @@ class BaseMethod(pl.LightningModule):
 
         if self.knn_eval and not self.trainer.sanity_checking:
             self.knn.update(test_features=out.pop("feats").detach(), test_targets=targets.detach())
-        
-        if self.cluster_eval and not self.trainer.sanity_checking:
-            self.cluster.update(test_features=out.pop("feats").detach(), test_targets=targets.detach())
 
         metrics = {
             "batch_size": batch_size,
@@ -613,11 +600,6 @@ class BaseMethod(pl.LightningModule):
         if self.knn_eval and not self.trainer.sanity_checking:
             val_knn_acc1, val_knn_acc5 = self.knn.compute()
             log.update({"val_knn_acc1": val_knn_acc1, "val_knn_acc5": val_knn_acc5})
-
-        if self.cluster_eval and not self.trainer.sanity_checking:
-            cluster_metrics_train, cluster_metrics_test = self.cluster.compute()
-            log.update({f"train_{k}": v for k, v in cluster_metrics_train._asdict().items()})
-            log.update({f"val_{k}": v for k, v in cluster_metrics_test._asdict().items()})
 
         self.log_dict(log, sync_dist=True)
 
