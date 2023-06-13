@@ -144,6 +144,7 @@ class MAE_REG(BaseMethod):
         self.norm_pix_loss: bool = cfg.method_kwargs.norm_pix_loss
         self.regularizer_weight = cfg.method_kwargs.regularizer_weight
         self.warmup_epochs = cfg.method_kwargs.warmup_epochs
+        self.regularization_epochs = cfg.method_kwargs.regularization_epochs
         self.layers = cfg.method_kwargs.layers
 
         # gather backbone info from timm
@@ -194,6 +195,7 @@ class MAE_REG(BaseMethod):
         cfg.method_kwargs.regularizer_weight = omegaconf_select(cfg, "method_kwargs.regularizer_weight", 0.0)
         cfg.method_kwargs.layers = omegaconf_select(cfg, "method_kwargs.layers", [])
         cfg.method_kwargs.warmup_epochs = omegaconf_select(cfg, "method_kwargs.warmup_epochs", 0)
+        cfg.method_kwargs.regularization_epochs = omegaconf_select(cfg, "method_kwargs.regularization_epochs", -1)
 
         return cfg
 
@@ -300,5 +302,9 @@ class MAE_REG(BaseMethod):
 
         if self.current_epoch < self.warmup_epochs:
             return reconstruction_loss + class_loss
-        else:
+        elif self.regularization_epochs == -1:
             return reconstruction_loss + class_loss + regularizer_loss_scaled
+        elif self.current_epoch < self.warmup_epochs + self.regularization_epochs:
+            return reconstruction_loss + class_loss + regularizer_loss_scaled
+        else:
+            return reconstruction_loss + class_loss
