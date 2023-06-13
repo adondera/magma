@@ -328,5 +328,5 @@ class MAE_REG(BaseMethod):
         metrics.update({"train_regularization_loss_applied": regularization_loss_applied})
 
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
-
+        print(regularization_loss_applied)
         return reconstruction_loss + class_loss + regularization_loss_applied
