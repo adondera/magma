@@ -308,6 +308,7 @@ class MAE_REG(BaseMethod):
         if self.reg_scheduler == "linear":
             linear_scheduler = max((self.current_epoch-self.warmup_epochs) / 250, 0)
             regularizer_weight *= linear_scheduler
+            print("Using linear scheduler")
 
         regularization_loss_scaled = regularizer_loss * regularizer_weight
         metrics.update({
