@@ -148,7 +148,7 @@ class MAE_REG(BaseMethod):
         self.layers = cfg.method_kwargs.layers
 
         # Scheduler params
-        self.scheduler = cfg.method_kwargs.scheduler_name
+        self.reg_scheduler = cfg.method_kwargs.scheduler_name
 
         # gather backbone info from timm
         self._vit_embed_dim: int = self.backbone.pos_embed.size(-1)
@@ -286,34 +286,42 @@ class MAE_REG(BaseMethod):
         for layer in self.layers:
             if layer != last_block_number:
                 regularizer_loss += manifold_regularizer_loss(out[f'mean_block_{layer}'][0], out[f'mean_block_{last_block_number}'][0])
-        
+
         # Divide loss by the number of terms in the regularization loss
         regularizer_loss /= (len(self.layers) - 1)
 
-        metrics = {}
-
-        # TODO: Change the hardcoded 250
-        if self.scheduler == "linear":
-            linear_scheduler = max((self.current_epoch-self.warmup_epochs) / 250, 0)
-            regularizer_loss_scaled = regularizer_loss * self.regularizer_weight * linear_scheduler
-            metrics.update({"train_regularizer_weight": self.regularizer_weight * linear_scheduler})
-        else:
-            regularizer_loss_scaled = regularizer_loss * self.regularizer_weight
-        
         metrics = {
             "train_reconstruction_loss": reconstruction_loss,
             "train_regularization_loss": regularizer_loss,
-	        "train_regularization_loss_scaled": regularizer_loss_scaled,
         }
+
         for number, _ in enumerate(self.backbone.blocks):
             metrics.update({f"standard_deviation_cls_{number}": out[f"cls_block_{number}"][0].std(dim=0).mean()})
+
+        regularizer_weight = self.regularizer_weight
+        # TODO: Change the hardcoded 250
+        if self.reg_scheduler == "linear":
+            linear_scheduler = max((self.current_epoch-self.warmup_epochs) / 250, 0)
+            regularizer_weight *= linear_scheduler
+
+        regularization_loss_scaled = regularizer_loss * regularizer_weight
+        metrics.update({
+                "train_regularizer_weight": regularizer_weight,
+                "train_regularization_loss_scaled": regularization_loss_scaled,
+            })
+
+        regularization_loss_applied = regularization_loss_scaled
+        if self.current_epoch < self.warmup_epochs:
+            regularization_loss_applied = 0
+        elif self.regularization_epochs == -1:
+            regularization_loss_applied = regularization_loss_scaled
+        elif self.current_epoch < self.warmup_epochs + self.regularization_epochs:
+            regularization_loss_applied = regularization_loss_scaled
+        else:
+            regularization_loss_applied = 0
+        
+        metrics.update({"train_regularization_loss_applied": regularization_loss_applied})
+
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
 
-        if self.current_epoch < self.warmup_epochs:
-            return reconstruction_loss + class_loss
-        elif self.regularization_epochs == -1:
-            return reconstruction_loss + class_loss + regularizer_loss_scaled
-        elif self.current_epoch < self.warmup_epochs + self.regularization_epochs:
-            return reconstruction_loss + class_loss + regularizer_loss_scaled
-        else:
-            return reconstruction_loss + class_loss
+        return reconstruction_loss + class_loss + regularization_loss_applied
