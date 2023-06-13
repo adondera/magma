@@ -147,6 +147,9 @@ class MAE_REG(BaseMethod):
         self.regularization_epochs = cfg.method_kwargs.regularization_epochs
         self.layers = cfg.method_kwargs.layers
 
+        # Scheduler params
+        self.scheduler = cfg.method_kwargs.scheduler_name
+
         # gather backbone info from timm
         self._vit_embed_dim: int = self.backbone.pos_embed.size(-1)
         # if patch size is not available, defaults to 16 or 14 depending on backbone
@@ -196,6 +199,7 @@ class MAE_REG(BaseMethod):
         cfg.method_kwargs.layers = omegaconf_select(cfg, "method_kwargs.layers", [])
         cfg.method_kwargs.warmup_epochs = omegaconf_select(cfg, "method_kwargs.warmup_epochs", 0)
         cfg.method_kwargs.regularization_epochs = omegaconf_select(cfg, "method_kwargs.regularization_epochs", -1)
+        cfg.method_kwargs.scheduler_name = omegaconf_select(cfg, "method_kwargs.scheduler_name", "none")
 
         return cfg
 
@@ -286,15 +290,20 @@ class MAE_REG(BaseMethod):
         # Divide loss by the number of terms in the regularization loss
         regularizer_loss /= (len(self.layers) - 1)
 
+        metrics = {}
+
         # TODO: Change the hardcoded 250
-        linear_scheduler = max((self.current_epoch-self.warmup_epochs) / 250, 0)
-        regularizer_loss_scaled = regularizer_loss * self.regularizer_weight * linear_scheduler
+        if self.scheduler == "linear":
+            linear_scheduler = max((self.current_epoch-self.warmup_epochs) / 250, 0)
+            regularizer_loss_scaled = regularizer_loss * self.regularizer_weight * linear_scheduler
+            metrics.update({"train_regularizer_weight": self.regularizer_weight * linear_scheduler})
+        else:
+            regularizer_loss_scaled = regularizer_loss * self.regularizer_weight
         
         metrics = {
             "train_reconstruction_loss": reconstruction_loss,
             "train_regularization_loss": regularizer_loss,
 	        "train_regularization_loss_scaled": regularizer_loss_scaled,
-            "train_regularizer_weight": self.regularizer_weight * linear_scheduler,
         }
         for number, _ in enumerate(self.backbone.blocks):
             metrics.update({f"standard_deviation_cls_{number}": out[f"cls_block_{number}"][0].std(dim=0).mean()})
