@@ -63,6 +63,8 @@ class TA_SimCLR(BaseMethod):
             nn.Linear(proj_hidden_dim, proj_output_dim),
         )
 
+        self.batch_norm = nn.BatchNorm1d(proj_output_dim)
+
         self.ta = TA_Attention(
             value_dim=value_dim,
             query_dim=query_dim,
@@ -72,8 +74,6 @@ class TA_SimCLR(BaseMethod):
             proj_dropout=proj_dropout,
             hidden_dim=qkv_hidden_dim,
         )
-
-        # self.koleo = KoLeoLoss()
 
     @staticmethod
     def add_and_assert_specific_cfg(cfg: omegaconf.DictConfig) -> omegaconf.DictConfig:
@@ -122,6 +122,7 @@ class TA_SimCLR(BaseMethod):
         extra_learnable_params = [
             {"name": "projector", "params": self.projector.parameters()},
             {"name": "ta", "params": self.ta.parameters()},
+            {"name": "batch_norm", "params": self.batch_norm.parameters()},
         ]
         return super().learnable_params + extra_learnable_params
 
@@ -175,10 +176,10 @@ class TA_SimCLR(BaseMethod):
         out = super().training_step(batch, batch_idx)
         class_loss = out["loss"]
         z = torch.cat(out["z"])
-        queries, keys, values = self.ta(z)
+        queries, keys, values = self.ta(self.batch_norm(z))
         residual, attn_weights = self.ta.attention(queries, keys, values)
-        regularizer_loss = manifold_regularizer_loss(z, residual)
-        z = z + residual
+        # regularizer_loss = manifold_regularizer_loss(z, residual)
+        z = residual
 
         # regularizer_loss = self.koleo(residual) * self.regularizer_weight
         # z = embedding_propagation(z, alpha=0.5, rbf_scale=1.0, norm_prop=False)
@@ -207,10 +208,10 @@ class TA_SimCLR(BaseMethod):
             "train_z_std": z_std,
             "train_z_unnormalized_std": unnormalized_z_std,
             "attention_entropy": attention_entropy,
-            "regularizer_loss": regularizer_loss,
+            # "regularizer_loss": regularizer_loss,
             # "collapse_loss": collapse_loss,
         }
 
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
 
-        return nce_loss + class_loss + regularizer_loss * self.regularizer_weight #+ collapse_loss
+        return nce_loss + class_loss #+ regularizer_loss * self.regularizer_weight #+ collapse_loss
