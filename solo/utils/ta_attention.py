@@ -63,10 +63,11 @@ class TA_Attention(nn.Module):
         attn_weights = torch.matmul(q, k.transpose(-2, -1)).contiguous() / self.d
         attn_weights = attn_weights.softmax(dim=-1)
 
-        # Zero out the 5 highest sum columns of each head
-        indices = torch.topk(attn_weights.sum(dim=1), k=5, dim=-1).indices
-        for idx, t in enumerate(indices):
-            attn_weights[idx, :, t] = 0
+        with torch.no_grad():
+            # Zero out the 5 highest sum columns of each head
+            indices = torch.topk(attn_weights.sum(dim=1), k=5, dim=-1).indices
+            for idx, t in enumerate(indices):
+                attn_weights[idx, :, t] = 0
 
         out = torch.matmul(self.attn_dropout(attn_weights), v)
         out = out.transpose(0, 1).reshape(batch_size, self.value_dim)
