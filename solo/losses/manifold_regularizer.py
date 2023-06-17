@@ -1,10 +1,17 @@
 import torch
+import matplotlib.pyplot as plt
+import wandb
 from solo.utils.embedding_propagation import get_similarity_matrix, get_laplacian
 
 
-def manifold_regularizer_loss(x: torch.Tensor, y: torch.Tensor):
+def manifold_regularizer_loss(x: torch.Tensor, y: torch.Tensor, log_laplacian: bool = False):
     weights_matrix = get_similarity_matrix(x, rbf_scale=1.0, scaling_factor=False)
     laplacian = get_laplacian(weights_matrix, normalized=True)
+    if log_laplacian:
+        fig, ax = plt.subplots()
+        ax.imshow(laplacian.cpu().numpy())
+        wandb.log({"laplacian": fig})
+
     # D = torch.diag(weights_matrix.sum(dim=-1))
     # subspace = y.T @ D @ y
 

@@ -31,7 +31,14 @@ from timm.models.vision_transformer import Block
 
 class MAEDecoder(nn.Module):
     def __init__(
-        self, in_dim, embed_dim, depth, num_heads, num_patches, patch_size, mlp_ratio=4.0
+        self,
+        in_dim,
+        embed_dim,
+        depth,
+        num_heads,
+        num_patches,
+        patch_size,
+        mlp_ratio=4.0,
     ) -> None:
         super().__init__()
 
@@ -74,7 +81,9 @@ class MAEDecoder(nn.Module):
             int(self.num_patches**0.5),
             cls_token=True,
         )
-        self.decoder_pos_embed.data.copy_(torch.from_numpy(decoder_pos_embed).float().unsqueeze(0))
+        self.decoder_pos_embed.data.copy_(
+            torch.from_numpy(decoder_pos_embed).float().unsqueeze(0)
+        )
 
         # timm's trunc_normal_(std=.02) is effectively normal_(std=0.02) as cutoff is too big (2.)
         nn.init.normal_(self.mask_token, std=0.02)
@@ -97,10 +106,14 @@ class MAEDecoder(nn.Module):
         x = self.decoder_embed(x)
 
         # append mask tokens to sequence
-        mask_tokens = self.mask_token.repeat(x.shape[0], ids_restore.shape[1] + 1 - x.shape[1], 1)
+        mask_tokens = self.mask_token.repeat(
+            x.shape[0], ids_restore.shape[1] + 1 - x.shape[1], 1
+        )
         x_ = torch.cat([x[:, 1:, :], mask_tokens], dim=1)  # no cls token
         # unshuffle
-        x_ = torch.gather(x_, dim=1, index=ids_restore.unsqueeze(-1).repeat(1, 1, x.shape[2]))
+        x_ = torch.gather(
+            x_, dim=1, index=ids_restore.unsqueeze(-1).repeat(1, 1, x.shape[2])
+        )
         x = torch.cat([x[:, :1, :], x_], dim=1)  # append cls token
 
         # add pos embed
@@ -154,7 +167,9 @@ class MAE_REG(BaseMethod):
         self._vit_embed_dim: int = self.backbone.pos_embed.size(-1)
         # if patch size is not available, defaults to 16 or 14 depending on backbone
         default_patch_size = 14 if self.backbone_name == "vit_huge" else 16
-        self._vit_patch_size: int = self.backbone_args.get("patch_size", default_patch_size)
+        self._vit_patch_size: int = self.backbone_args.get(
+            "patch_size", default_patch_size
+        )
         self._vit_num_patches: int = self.backbone.patch_embed.num_patches
 
         decoder_embed_dim: int = cfg.method_kwargs.decoder_embed_dim
@@ -185,21 +200,35 @@ class MAE_REG(BaseMethod):
 
         cfg = super(MAE_REG, MAE_REG).add_and_assert_specific_cfg(cfg)
 
-        assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.decoder_embed_dim")
+        assert not omegaconf.OmegaConf.is_missing(
+            cfg, "method_kwargs.decoder_embed_dim"
+        )
         assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.decoder_depth")
-        assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.decoder_num_heads")
+        assert not omegaconf.OmegaConf.is_missing(
+            cfg, "method_kwargs.decoder_num_heads"
+        )
 
-        cfg.method_kwargs.mask_ratio = omegaconf_select(cfg, "method_kwargs.mask_ratio", 0.75)
+        cfg.method_kwargs.mask_ratio = omegaconf_select(
+            cfg, "method_kwargs.mask_ratio", 0.75
+        )
         cfg.method_kwargs.norm_pix_loss = omegaconf_select(
             cfg,
             "method_kwargs.norm_pix_loss",
             False,
         )
-        cfg.method_kwargs.regularizer_weight = omegaconf_select(cfg, "method_kwargs.regularizer_weight", 0.0)
+        cfg.method_kwargs.regularizer_weight = omegaconf_select(
+            cfg, "method_kwargs.regularizer_weight", 0.0
+        )
         cfg.method_kwargs.layers = omegaconf_select(cfg, "method_kwargs.layers", [])
-        cfg.method_kwargs.warmup_epochs = omegaconf_select(cfg, "method_kwargs.warmup_epochs", 0)
-        cfg.method_kwargs.regularization_epochs = omegaconf_select(cfg, "method_kwargs.regularization_epochs", -1)
-        cfg.method_kwargs.scheduler_name = omegaconf_select(cfg, "method_kwargs.scheduler_name", "none")
+        cfg.method_kwargs.warmup_epochs = omegaconf_select(
+            cfg, "method_kwargs.warmup_epochs", 0
+        )
+        cfg.method_kwargs.regularization_epochs = omegaconf_select(
+            cfg, "method_kwargs.regularization_epochs", -1
+        )
+        cfg.method_kwargs.scheduler_name = omegaconf_select(
+            cfg, "method_kwargs.scheduler_name", "none"
+        )
 
         return cfg
 
@@ -233,10 +262,12 @@ class MAE_REG(BaseMethod):
 
         handles = []
         for number, block in enumerate(self.backbone.blocks):
+
             def hook_fn(module, input, output, number=number):
                 mean_token_representation = output[:, 1:, :].mean(dim=1)
                 out.update({f"mean_block_{number}": mean_token_representation})
                 out.update({f"cls_block_{number}": output[:, 0, :]})
+
             handle = block.register_forward_hook(hook_fn)
             handles.append(handle)
 
@@ -289,7 +320,11 @@ class MAE_REG(BaseMethod):
 
         for layer in self.layers:
             if layer != last_block_number:
-                regularizer_loss += manifold_regularizer_loss(out[f'mean_block_{layer}'][0], out[f'mean_block_{last_block_number}'][0])
+                regularizer_loss += manifold_regularizer_loss(
+                    out[f"mean_block_{layer}"][0],
+                    out[f"mean_block_{last_block_number}"][0],
+                    log_laplacian=True,
+                )
 
         # Divide loss by the number of terms in the regularization loss
         if len(self.layers) > 0:
@@ -301,20 +336,28 @@ class MAE_REG(BaseMethod):
         }
 
         for number, _ in enumerate(self.backbone.blocks):
-            metrics.update({f"standard_deviation_cls_{number}": out[f"cls_block_{number}"][0].std(dim=0).mean()})
+            metrics.update(
+                {
+                    f"standard_deviation_cls_{number}": out[f"cls_block_{number}"][0]
+                    .std(dim=0)
+                    .mean()
+                }
+            )
 
         regularizer_weight = self.regularizer_weight
         # TODO: Change the hardcoded 250
         if self.reg_scheduler == "linear":
-            linear_scheduler = max((self.current_epoch-self.warmup_epochs) / 250, 0)
+            linear_scheduler = max((self.current_epoch - self.warmup_epochs) / 250, 0)
             regularizer_weight *= linear_scheduler
             print("Using linear scheduler")
 
         regularization_loss_scaled = regularizer_loss * regularizer_weight
-        metrics.update({
+        metrics.update(
+            {
                 "train_regularizer_weight": regularizer_weight,
                 "train_regularization_loss_scaled": regularization_loss_scaled,
-            })
+            }
+        )
 
         regularization_loss_applied = regularization_loss_scaled
         if self.current_epoch < self.warmup_epochs:
@@ -325,8 +368,10 @@ class MAE_REG(BaseMethod):
             regularization_loss_applied = regularization_loss_scaled
         else:
             regularization_loss_applied = 0
-        
-        metrics.update({"train_regularization_loss_applied": regularization_loss_applied})
+
+        metrics.update(
+            {"train_regularization_loss_applied": regularization_loss_applied}
+        )
 
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
         print(regularization_loss_applied)
