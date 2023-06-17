@@ -184,8 +184,8 @@ class AutoUMAP(Callback):
 
         device = module.device
         backbone_features = []
-        projector_features = []
-        ta_features = []
+        # projector_features = []
+        # ta_features = []
         Y = []
 
         # set module to eval model and collect all feature representations
@@ -196,61 +196,63 @@ class AutoUMAP(Callback):
                 y = y.to(device, non_blocking=True)
 
                 feats = module(x)["feats"]
-                z = module.projector(feats)
-                try:
-                    queries, keys, values = module.ta(z)
-                    residual, _ = module.ta.attention(queries, keys, values)
-                except:
-                    queries, keys, values = module.student_TA(z)
-                    residual, _ = module.student_TA.attention(queries, keys, values)
-                # TODO: This now needs to change depending on how we want things
-                ta_output = residual
+                # z = module.projector(feats)
+                # try:
+                #     queries, keys, values = module.ta(z)
+                #     residual, _ = module.ta.attention(queries, keys, values)
+                # except:
+                #     queries, keys, values = module.student_TA(z)
+                #     residual, _ = module.student_TA.attention(queries, keys, values)
+                # # TODO: This now needs to change depending on how we want things
+                # ta_output = residual
 
+                if not feats.is_contiguous():
+                    feats = feats.contiguous()
                 feats = gather(feats)
-                z = gather(z)
-                ta_output = gather(ta_output)
+                # z = gather(z)
+                # ta_output = gather(ta_output)
                 y = gather(y)
 
                 backbone_features.append(feats.cpu())
-                projector_features.append(z.cpu())
-                ta_features.append(ta_output.cpu())
+                # projector_features.append(z.cpu())
+                # ta_features.append(ta_output.cpu())
                 Y.append(y.cpu())
         module.train()
 
         if trainer.is_global_zero and len(backbone_features):
             backbone_features = torch.cat(backbone_features, dim=0).numpy()
-            projector_features = torch.cat(projector_features, dim=0).numpy()
-            ta_features = torch.cat(ta_features, dim=0).numpy()
+            # projector_features = torch.cat(projector_features, dim=0).numpy()
+            # ta_features = torch.cat(ta_features, dim=0).numpy()
             Y = torch.cat(Y, dim=0)
             num_classes = len(torch.unique(Y))
             Y = Y.numpy()
 
             backbone_features = umap.UMAP(n_components=2).fit_transform(backbone_features)
-            projector_features = umap.UMAP(n_components=2).fit_transform(projector_features)
-            ta_features = umap.UMAP(n_components=2).fit_transform(ta_features)
+            # projector_features = umap.UMAP(n_components=2).fit_transform(projector_features)
+            # ta_features = umap.UMAP(n_components=2).fit_transform(ta_features)
 
             silhouette_score_backbone = metrics.silhouette_score(backbone_features, Y)
-            silhouette_score_projector = metrics.silhouette_score(projector_features, Y)
-            silhouette_score_ta = metrics.silhouette_score(ta_features, Y)
+            # silhouette_score_projector = metrics.silhouette_score(projector_features, Y)
+            # silhouette_score_ta = metrics.silhouette_score(ta_features, Y)
 
             chi_backbone = metrics.calinski_harabasz_score(backbone_features, Y)
-            chi_projector = metrics.calinski_harabasz_score(projector_features, Y)
-            chi_ta = metrics.calinski_harabasz_score(ta_features, Y)
+            # chi_projector = metrics.calinski_harabasz_score(projector_features, Y)
+            # chi_ta = metrics.calinski_harabasz_score(ta_features, Y)
 
             dbi_backbone = metrics.davies_bouldin_score(backbone_features, Y)
-            dbi_projector = metrics.davies_bouldin_score(projector_features, Y)
-            dbi_ta = metrics.davies_bouldin_score(ta_features, Y)
+            # dbi_projector = metrics.davies_bouldin_score(projector_features, Y)
+            # dbi_ta = metrics.davies_bouldin_score(ta_features, Y)
 
             metrics_dict = {
                 "backbone_silhouette_score": silhouette_score_backbone,
-                "projector_silhouette_score": silhouette_score_projector,
-                "ta_silhouette_score": silhouette_score_ta,
+                # "projector_silhouette_score": silhouette_score_projector,
+                # "ta_silhouette_score": silhouette_score_ta,
                 "backbone_calinski_harabasz_score": chi_backbone,
-                "projector_calinski_harabasz_score": chi_projector,
-                "ta_calinski_harabasz_score": chi_ta,
+                # "projector_calinski_harabasz_score": chi_projector,
+                # "ta_calinski_harabasz_score": chi_ta,
                 "backbone_davies_bouldin_score": dbi_backbone,
-                "projector_davies_bouldin_score": dbi_projector,
-                "ta_davies_bouldin_score": dbi_ta,
+                # "projector_davies_bouldin_score": dbi_projector,
+                # "ta_davies_bouldin_score": dbi_ta,
             }
 
             if isinstance(trainer.logger, pl.loggers.WandbLogger):
@@ -260,8 +262,8 @@ class AutoUMAP(Callback):
                 )
 
             self.plot_umap(backbone_features, Y, trainer, "validation_umap", num_classes)
-            self.plot_umap(projector_features, Y, trainer, "projector_umap", num_classes)
-            self.plot_umap(ta_features, Y, trainer, "ta_umap", num_classes)
+            # self.plot_umap(projector_features, Y, trainer, "projector_umap", num_classes)
+            # self.plot_umap(ta_features, Y, trainer, "ta_umap", num_classes)
 
     def on_validation_end(self, trainer: pl.Trainer, module: pl.LightningModule):
         """Tries to generate an up-to-date UMAP visualization of the features
