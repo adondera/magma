@@ -9,7 +9,7 @@ def manifold_regularizer_loss(x: torch.Tensor, y: torch.Tensor, log_laplacian: b
     laplacian = get_laplacian(weights_matrix, normalized=True)
     if log_laplacian:
         fig, ax = plt.subplots()
-        ax.imshow(laplacian.cpu().numpy())
+        ax.imshow(laplacian.detach().cpu().numpy())
         wandb.log({"laplacian": fig})
 
     # D = torch.diag(weights_matrix.sum(dim=-1))
