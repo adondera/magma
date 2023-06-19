@@ -18,15 +18,22 @@ def manifold_regularizer_loss(x: torch.Tensor, y: torch.Tensor, log_laplacian: b
             spectral_gap = sorted_eigvals[1] - sorted_eigvals[0]
             laplacian_energy = sum(abs(x - 1) for x in sorted_eigvals)
 
+            fig = figure.Figure()
+            ax = fig.subplots(1)
+            ax.imshow(-laplacian.detach().cpu().numpy(), norm="log")
+
+            fig2 = figure.Figure()
+            ax2 = fig2.subplots(1)
+            ax2.imshow(weights_matrix.detach().cpu().numpy())
+
             metrics = {
                 "Number of zero eigenvalues": zero_eigvals,
                 "Second smallest eigenvalue": second_smallest_eigenvalue,
                 "Spectral gap": spectral_gap,
                 "Laplacian energy": laplacian_energy,
+                "Laplacian": fig,
+                "Similarity matrix": fig2,
             }
-            # fig = figure.Figure()
-            # ax = fig.subplots(1)
-            # ax.imshow(-laplacian.detach().cpu().numpy())
             wandb.log(metrics)
 
     # D = torch.diag(weights_matrix.sum(dim=-1))
