@@ -27,7 +27,6 @@ from solo.losses.swav import swav_loss_func
 from solo.methods.base import BaseMethod
 from solo.utils.misc import omegaconf_select
 from solo.utils.sinkhorn_knopp import SinkhornKnopp
-from solo.losses.manifold_regularizer import manifold_regularizer_loss
 
 class SwAV(BaseMethod):
     def __init__(self, cfg: omegaconf.DictConfig):
@@ -222,7 +221,6 @@ class SwAV(BaseMethod):
         out = super().training_step(batch, batch_idx)
         class_loss = out["loss"]
         preds = out["p"]
-        regularizer_loss, collapse_loss = manifold_regularizer_loss(torch.cat(out["z"]), torch.cat(out["p"]))
 
         # ------- swav loss -------
         assignments = self.get_assignments(preds[: self.num_large_crops])
@@ -235,11 +233,7 @@ class SwAV(BaseMethod):
             self.queue[:, : z.size(1)] = z.detach()
 
         self.log("train_swav_loss", swav_loss, on_epoch=True, sync_dist=True)
-        self.log("regularizer_loss", regularizer_loss, on_epoch=True, sync_dist=True)
-        self.log("collapse_loss", collapse_loss, on_epoch=True, sync_dist=True)
-        print(regularizer_loss)
-        print(collapse_loss)
-        return swav_loss + class_loss + regularizer_loss * self.regularizer_weight
+        return swav_loss + class_loss
 
     def on_after_backward(self):
         """Zeroes the gradients of the prototypes."""

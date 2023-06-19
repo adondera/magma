@@ -79,23 +79,17 @@ class TA_BarlowTwins(BaseMethod):
             hidden_dim=qkv_hidden_dim,
         )
 
-        self.norm1 = nn.LayerNorm(proj_output_dim)
-        self.mlp = nn.Sequential(
-            nn.Linear(proj_output_dim, proj_hidden_dim, bias=True),
-            nn.GELU(),
-            nn.Linear(proj_hidden_dim, proj_output_dim, bias=True)
-        )
-        self.norm2 = nn.LayerNorm(proj_output_dim)
+        # self.norm = nn.BatchNorm1d(proj_output_dim)
         
-        # self.ta.qkv_transform = nn.Sequential(
-        #     nn.Linear(self.features_dim, proj_hidden_dim),
-        #     nn.BatchNorm1d(proj_hidden_dim),
-        #     nn.ReLU(),
-        #     nn.Linear(proj_hidden_dim, proj_hidden_dim),
-        #     nn.BatchNorm1d(proj_hidden_dim),
-        #     nn.ReLU(),
-        #     nn.Linear(proj_hidden_dim, query_dim * 2 + value_dim),
-        # )
+        self.ta.qkv_transform = nn.Sequential(
+            nn.Linear(proj_output_dim, proj_hidden_dim),
+            nn.BatchNorm1d(proj_hidden_dim),
+            nn.ReLU(),
+            nn.Linear(proj_hidden_dim, proj_hidden_dim),
+            nn.BatchNorm1d(proj_hidden_dim),
+            nn.ReLU(),
+            nn.Linear(proj_hidden_dim, query_dim * 2 + value_dim),
+        )
 
     @staticmethod
     def add_and_assert_specific_cfg(cfg: omegaconf.DictConfig) -> omegaconf.DictConfig:
@@ -144,9 +138,7 @@ class TA_BarlowTwins(BaseMethod):
         extra_learnable_params = [
             {"name": "projector", "params": self.projector.parameters()},
             {"name": "ta", "params": self.ta.parameters()},
-            {"name": "norm1", "params": self.norm1.parameters()},
-            {"name": "mlp", "params": self.mlp.parameters()},
-            {"name": "norm2", "params": self.norm2.parameters()},
+            # {"name": "norm", "params": self.norm.parameters()},
         ]
         return super().learnable_params + extra_learnable_params
 
@@ -182,8 +174,8 @@ class TA_BarlowTwins(BaseMethod):
         z1, z2 = out["z"]
         # b, c = z1.shape
 
-        query1, key1, value1 = self.ta(self.norm1(z1))
-        query2, key2, value2 = self.ta(self.norm1(z2))
+        query1, key1, value1 = self.ta(z1)
+        query2, key2, value2 = self.ta(z2)
 
         key_pool = torch.cat([key1, key2], dim=1)
         value_pool = torch.cat([value1, value2], dim=1)
@@ -191,11 +183,8 @@ class TA_BarlowTwins(BaseMethod):
         residual1, attn_weights1 = self.ta.attention(query1, key_pool, value_pool)
         residual2, attn_weights2 = self.ta.attention(query2, key_pool, value_pool)
 
-        z1 = z1 + residual1
-        z2 = z2 + residual2
-
-        z1 = z1 + self.mlp(self.norm2(z1))
-        z2 = z2 + self.mlp(self.norm2(z2))        
+        z1 = residual1
+        z2 = residual2    
 
         # all_z = torch.cat([z1, z2])
         # all_z = embedding_propagation(all_z, alpha=0.5, rbf_scale=1.0, norm_prop=False)
@@ -210,7 +199,7 @@ class TA_BarlowTwins(BaseMethod):
         barlow_loss_residual = barlow_loss_func(
             residual1, residual2, lamb=self.lamb, scale_loss=self.scale_loss
         )
-        barlow_loss_residual *= self.regularizer_weight
+        barlow_loss_residual_weighted = barlow_loss_residual * self.regularizer_weight
 
         # TODO: Check that these metrics are computed correctly
         with torch.no_grad():
@@ -258,7 +247,8 @@ class TA_BarlowTwins(BaseMethod):
             "attention_entropy": attention_entropy,
             "residual_svd_entropy": residual_svd_entropy,
             "train_residual_barlow_loss": barlow_loss_residual,
+            "train_residual_barlow_loss_weighted": barlow_loss_residual_weighted,
         }
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
 
-        return barlow_loss + class_loss + barlow_loss_residual
+        return barlow_loss + class_loss + barlow_loss_residual_weighted

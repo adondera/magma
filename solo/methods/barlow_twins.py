@@ -25,7 +25,6 @@ import torch.nn as nn
 from solo.losses.barlow import barlow_loss_func
 from solo.methods.base import BaseMethod
 from solo.utils.misc import omegaconf_select
-from solo.losses.manifold_regularizer import manifold_regularizer_loss
 
 class BarlowTwins(BaseMethod):
     def __init__(self, cfg: omegaconf.DictConfig):
@@ -104,8 +103,12 @@ class BarlowTwins(BaseMethod):
         """
 
         out = super().forward(X)
+        # def hook_fn(module, input, output):
+        #     out['z_intermediate'] = output
+        # handle = self.projector[0].register_forward_hook(hook_fn)
         z = self.projector(out["feats"])
         out.update({"z": z})
+        # handle.remove()
         return out
 
     def training_step(self, batch: Sequence[Any], batch_idx: int) -> torch.Tensor:
@@ -123,13 +126,13 @@ class BarlowTwins(BaseMethod):
         out = super().training_step(batch, batch_idx)
         class_loss = out["loss"]
         z1, z2 = out["z"]
-        regularizer_loss, collapse_loss = manifold_regularizer_loss(torch.cat(out["feats"]), torch.cat(out["z"]))
+        # regularizer_loss, collapse_loss = manifold_regularizer_loss(torch.cat(out["z_intermediate"]), torch.cat(out["z"]))
         # ------- barlow twins loss -------
         barlow_loss = barlow_loss_func(z1, z2, lamb=self.lamb, scale_loss=self.scale_loss)
 
         self.log("train_barlow_loss", barlow_loss, on_epoch=True, sync_dist=True)
-        self.log("regularizer_loss", regularizer_loss, on_epoch=True, sync_dist=True)
-        self.log("collapse_loss", collapse_loss, on_epoch=True, sync_dist=True)
-        print(regularizer_loss)
-        print(collapse_loss)
-        return barlow_loss + class_loss + regularizer_loss * self.regularizer_weight
+        # self.log("regularizer_loss", regularizer_loss, on_epoch=True, sync_dist=True)
+        # self.log("collapse_loss", collapse_loss, on_epoch=True, sync_dist=True)
+        # print(regularizer_loss)
+        # print(collapse_loss)
+        return barlow_loss + class_loss #+ regularizer_loss * self.regularizer_weight

@@ -24,7 +24,7 @@ import torch
 import torch.nn as nn
 from solo.losses.mae import mae_loss_func
 from solo.methods.base import BaseMethod
-from solo.losses.manifold_regularizer import manifold_regularizer_loss
+from solo.losses.manifold_regularizer import ManifoldRegularizer
 from solo.utils.misc import generate_2d_sincos_pos_embed, omegaconf_select
 from timm.models.vision_transformer import Block
 
@@ -176,6 +176,8 @@ class MAE_REG(BaseMethod):
         decoder_depth: int = cfg.method_kwargs.decoder_depth
         decoder_num_heads: int = cfg.method_kwargs.decoder_num_heads
 
+        self.manifold_regularizer = ManifoldRegularizer(log_metrics=True)
+
         # decoder
         self.decoder = MAEDecoder(
             in_dim=self.features_dim,
@@ -320,10 +322,9 @@ class MAE_REG(BaseMethod):
 
         for layer in self.layers:
             if layer != last_block_number:
-                regularizer_loss += manifold_regularizer_loss(
+                regularizer_loss += self.manifold_regularizer.manifold_regularizer_loss(
                     out[f"mean_block_{layer}"][0],
                     out[f"mean_block_{last_block_number}"][0],
-                    log_laplacian=True,
                 )
 
         # Divide loss by the number of terms in the regularization loss

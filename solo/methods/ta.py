@@ -113,6 +113,8 @@ class BYOLWithTA(BaseMomentumMethod):
             nn.Linear(pred_hidden_dim, proj_output_dim),
         )
 
+        self.norm = nn.BatchNorm1d(proj_output_dim)
+
     @staticmethod
     def add_and_assert_specific_cfg(cfg: omegaconf.DictConfig) -> omegaconf.DictConfig:
         """Adds method specific default values/checks for config.
@@ -166,6 +168,7 @@ class BYOLWithTA(BaseMomentumMethod):
                 "params": self.student_TA.parameters(),
                 "lr": self.ta_lr,
             },
+            {"name": "norm", "params": self.norm.parameters()},
         ]
         return super().learnable_params + extra_learnable_params
 
@@ -208,11 +211,11 @@ class BYOLWithTA(BaseMomentumMethod):
             for idx2 in np.delete(range(self.num_crops), idx1):
                 z = self.projector(out["feats"][idx1])
 
-                student_q, student_k, student_v = self.student_TA(z)
+                student_q, student_k, student_v = self.student_TA(self.norm(z))
 
                 with torch.no_grad():
                     momentum_z = self.momentum_projector(out["momentum_feats"][idx2])
-                    teacher_q, teacher_k, teacher_v = self.teacher_TA(momentum_z)
+                    teacher_q, teacher_k, teacher_v = self.teacher_TA(self.norm(momentum_z))
                 
                 key_pool = torch.cat([student_k, teacher_k.detach()], dim=1)
                 value_pool = torch.cat([student_v, teacher_v.detach()], dim=1)
@@ -220,13 +223,13 @@ class BYOLWithTA(BaseMomentumMethod):
                 student_residual, student_attention_weights = self.student_TA.attention(
                     student_q, key_pool, value_pool
                 )
-                z = z + student_residual
+                z = student_residual
 
                 with torch.no_grad():
                     teacher_residual, _ = self.teacher_TA.attention(
                         teacher_q, key_pool, value_pool
                     )
-                    momentum_z = momentum_z + teacher_residual
+                    momentum_z = teacher_residual
 
                 ta_output.append(z)
                 residuals.append(student_residual)

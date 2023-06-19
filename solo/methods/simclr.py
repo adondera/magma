@@ -23,7 +23,6 @@ import omegaconf
 import torch
 import torch.nn as nn
 from solo.losses.simclr import simclr_loss_func
-from solo.losses.manifold_regularizer import manifold_regularizer_loss
 from solo.methods.base import BaseMethod
 from solo.utils.misc import omegaconf_select
 
@@ -101,12 +100,12 @@ class SimCLR(BaseMethod):
         """
 
         out = super().forward(X)
-        def hook_fn(module, input, output):
-            out['z_intermediate'] = output
-        handle = self.projector[0].register_forward_hook(hook_fn)
+        # def hook_fn(module, input, output):
+        #     out['z_intermediate'] = output
+        # handle = self.projector[0].register_forward_hook(hook_fn)
         z = self.projector(out["feats"])
         out.update({"z": z})
-        handle.remove()
+        # handle.remove()
         return out
 
     def multicrop_forward(self, X: torch.tensor) -> Dict[str, Any]:
@@ -121,12 +120,12 @@ class SimCLR(BaseMethod):
         """
 
         out = super().multicrop_forward(X)
-        def hook_fn(module, input, output):
-            out['z_intermediate'] = output
-        handle = self.projector[0].register_forward_hook(hook_fn)
+        # def hook_fn(module, input, output):
+        #     out['z_intermediate'] = output
+        # handle = self.projector[0].register_forward_hook(hook_fn)
         z = self.projector(out["feats"])
         out.update({"z": z})
-        handle.remove()
+        # handle.remove()
         return out
 
     def training_step(self, batch: Sequence[Any], batch_idx: int) -> torch.Tensor:
@@ -146,9 +145,9 @@ class SimCLR(BaseMethod):
         out = super().training_step(batch, batch_idx)
         class_loss = out["loss"]
         z = torch.cat(out["z"])
-        z_intermediate = torch.cat(out["z_intermediate"])
+        # z_intermediate = torch.cat(out["z_intermediate"])
         # feats = torch.cat(out["feats"])
-        regularizer_loss, collapse_loss = manifold_regularizer_loss(z_intermediate, z)
+        # regularizer_loss, collapse_loss = manifold_regularizer_loss(feats, z)
 
         # ------- contrastive loss -------
         n_augs = self.num_large_crops + self.num_small_crops
@@ -161,8 +160,8 @@ class SimCLR(BaseMethod):
         )
 
         self.log("train_nce_loss", nce_loss, on_epoch=True, sync_dist=True)
-        self.log("regularizer_loss", regularizer_loss, on_epoch=True, sync_dist=True)
-        self.log("collapse_loss", collapse_loss, on_epoch=True, sync_dist=True)
-        print(regularizer_loss)
-        print(collapse_loss)
-        return nce_loss + class_loss + regularizer_loss * self.regularizer_weight
+        # self.log("regularizer_loss", regularizer_loss, on_epoch=True, sync_dist=True)
+        # self.log("collapse_loss", collapse_loss, on_epoch=True, sync_dist=True)
+        # print(regularizer_loss)
+        # print(collapse_loss)
+        return nce_loss + class_loss #+ regularizer_loss * self.regularizer_weight

@@ -25,7 +25,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from solo.losses.simclr import simclr_loss_func
 from solo.losses.koleo import KoLeoLoss
-from solo.losses.manifold_regularizer import manifold_regularizer_loss
 from solo.methods.base import BaseMethod
 from solo.utils.ta_attention import TA_Attention
 from solo.utils.misc import omegaconf_select
