@@ -18,7 +18,7 @@
 # DEALINGS IN THE SOFTWARE.
 
 from typing import Dict, List, Sequence
-
+from matplotlib import figure
 import torch
 
 
@@ -71,3 +71,38 @@ def weighted_mean(outputs: List[Dict], key: str, batch_size_key: str) -> float:
         n += out[batch_size_key]
     value = value / n
     return value.squeeze(0)
+
+
+def tensor_mean(outputs: List[Dict], key: str, batch_size_key: str) -> torch.Tensor:
+    """
+    Computes the mean tensor of the values of a key. Only tensors of the same batch size are considered.
+
+    Args:
+        outputs (List[Dict]): list of dicts containing the outputs of a validation step.
+        key (str): key of the tensor metric of interest.
+        batch_size_key (str): key of batch size values.
+
+    Returns:
+        torch.Tensor: mean tensor of the values of a key
+    """
+    batch_size = outputs[0][batch_size_key]
+    tensors = torch.stack(
+        [output[key] for output in outputs if output[batch_size_key] == batch_size]
+    )
+    return tensors.mean(dim=0)
+
+
+def get_heatmap(matrix: torch.Tensor, norm: str = None) -> figure.Figure:
+    """
+    Returns a heatmap of the given matrix.
+    
+    Args:
+        matrix (torch.Tensor): matrix to plot.
+
+    Returns:
+        figure.Figure: heatmap of the matrix.
+    """
+    fig = figure.Figure()
+    ax = fig.subplots(1)
+    ax.imshow(matrix.detach().cpu().numpy(), norm=norm)
+    return fig

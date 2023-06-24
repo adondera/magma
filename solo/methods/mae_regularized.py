@@ -25,7 +25,9 @@ import torch.nn as nn
 from solo.losses.mae import mae_loss_func
 from solo.methods.base import BaseMethod
 from solo.losses.manifold_regularizer import ManifoldRegularizer
+from solo.utils.embedding_propagation import get_similarity_matrix, get_laplacian
 from solo.utils.misc import generate_2d_sincos_pos_embed, omegaconf_select
+from solo.utils.metrics import weighted_mean, tensor_mean, get_heatmap
 from timm.models.vision_transformer import Block
 
 
@@ -176,7 +178,7 @@ class MAE_REG(BaseMethod):
         decoder_depth: int = cfg.method_kwargs.decoder_depth
         decoder_num_heads: int = cfg.method_kwargs.decoder_num_heads
 
-        self.manifold_regularizer = ManifoldRegularizer(log_metrics=True)
+        self.manifold_regularizer = ManifoldRegularizer(return_metrics=True)
 
         # decoder
         self.decoder = MAEDecoder(
@@ -301,6 +303,7 @@ class MAE_REG(BaseMethod):
 
         out = super().training_step(batch, batch_idx)
         class_loss = out["loss"]
+        metrics = {}
 
         patch_size = self._vit_patch_size
         imgs = batch[1]
@@ -322,19 +325,22 @@ class MAE_REG(BaseMethod):
 
         for layer in self.layers:
             if layer != last_block_number:
-                regularizer_loss += self.manifold_regularizer.manifold_regularizer_loss(
+                loss_term, laplacian_metrics = self.manifold_regularizer.manifold_regularizer_loss(
                     out[f"mean_block_{layer}"][0],
                     out[f"mean_block_{last_block_number}"][0],
                 )
+                for key, value in laplacian_metrics.items():
+                    metrics[f"{key}_Layer{layer}"] = value
+                regularizer_loss += loss_term
 
         # Divide loss by the number of terms in the regularization loss
         if len(self.layers) > 0:
             regularizer_loss /= len(self.layers)
 
-        metrics = {
+        metrics.update({
             "train_reconstruction_loss": reconstruction_loss,
             "train_regularization_loss": regularizer_loss,
-        }
+        })
 
         for number, _ in enumerate(self.backbone.blocks):
             metrics.update(
@@ -377,3 +383,90 @@ class MAE_REG(BaseMethod):
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
         print(regularization_loss_applied)
         return reconstruction_loss + class_loss + regularization_loss_applied
+
+    def validation_step(
+        self, batch: List[torch.Tensor], batch_idx: int, dataloader_idx: int = None
+    ) -> Dict[str, Any]:
+        """Validation step for pytorch lightning. It does all the shared operations, such as
+        forwarding a batch of images, computing logits and computing metrics.
+
+        Args:
+            batch (List[torch.Tensor]):a batch of data in the format of [img_indexes, X, Y].
+            batch_idx (int): index of the batch.
+
+        Returns:
+            Dict[str, Any]: dict with the batch_size (used for averaging), the classification loss
+                and accuracies.
+        """
+
+        X, targets = batch
+        batch_size = targets.size(0)
+
+        out = self.base_validation_step(X, targets)
+
+        laplacian_matrices = {}
+        similarity_matrices = {}
+        for layer in self.layers:
+            similarity_matrix = get_similarity_matrix(
+                out[f"mean_block_{layer}"], rbf_scale=1.0, scaling_factor=False
+            )
+            laplacian_matrix = get_laplacian(similarity_matrix, normalized=True)
+            similarity_matrices[f"SimilarityMatrix_Layer{layer}"] = similarity_matrix
+            laplacian_matrices[f"LaplacianMatrix_Layer{layer}"] = laplacian_matrix
+
+        if self.knn_eval and not self.trainer.sanity_checking:
+            self.knn.update(
+                test_features=out.pop("feats").detach(), test_targets=targets.detach()
+            )
+
+        metrics = {
+            "batch_size": batch_size,
+            "val_loss": out["loss"],
+            "val_acc1": out["acc1"],
+            "val_acc5": out["acc5"],
+        }
+        metrics.update(laplacian_matrices)
+        metrics.update(similarity_matrices)
+        return metrics
+
+    def validation_epoch_end(self, outs: List[Dict[str, Any]]):
+        """Averages the losses and accuracies of all the validation batches.
+        This is needed because the last batch can be smaller than the others,
+        slightly skewing the metrics.
+
+        Args:
+            outs (List[Dict[str, Any]]): list of outputs of the validation step.
+        """
+
+        val_loss = weighted_mean(outs, "val_loss", "batch_size")
+        val_acc1 = weighted_mean(outs, "val_acc1", "batch_size")
+        val_acc5 = weighted_mean(outs, "val_acc5", "batch_size")
+
+        log = {"val_loss": val_loss, "val_acc1": val_acc1, "val_acc5": val_acc5}
+
+        for layer in self.layers:
+            laplacian_matrix = tensor_mean(
+                outs, f"LaplacianMatrix_Layer{layer}", "batch_size"
+            )
+            self.logger.log_image(
+                key=f"LaplacianMatrixFig_Layer{layer}",
+                images=[get_heatmap(-laplacian_matrix, norm="log")],
+                caption=[f"Laplacian matrix at layer {layer}. Epoch {self.current_epoch}"],
+                step = self.current_epoch,
+            )
+
+            similarity_matrix = tensor_mean(
+                outs, f"SimilarityMatrix_Layer{layer}", "batch_size"
+            )
+            self.logger.log_image(
+                key=f"SimilarityMatrixFig_Layer{layer}",
+                images=[get_heatmap(similarity_matrix)],
+                caption=[f"Similarity matrix at layer {layer}. Epoch {self.current_epoch}"],
+                step = self.current_epoch,
+            )
+
+        if self.knn_eval and not self.trainer.sanity_checking:
+            val_knn_acc1, val_knn_acc5 = self.knn.compute()
+            log.update({"val_knn_acc1": val_knn_acc1, "val_knn_acc5": val_knn_acc5})
+
+        self.log_dict(log, sync_dist=True)
