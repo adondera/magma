@@ -27,6 +27,7 @@ from solo.methods.base import BaseMethod
 from solo.losses.manifold_regularizer import ManifoldRegularizer
 from solo.utils.embedding_propagation import get_similarity_matrix, get_laplacian
 from solo.utils.misc import generate_2d_sincos_pos_embed, omegaconf_select
+from solo.utils.weight_schedulers import TriangleScheduler, WarmupScheduler, ConstantScheduler
 from solo.utils.metrics import weighted_mean, tensor_mean, get_heatmap
 from timm.models.vision_transformer import Block
 
@@ -157,13 +158,10 @@ class MAE_REG(BaseMethod):
 
         self.mask_ratio: float = cfg.method_kwargs.mask_ratio
         self.norm_pix_loss: bool = cfg.method_kwargs.norm_pix_loss
-        self.regularizer_weight = cfg.method_kwargs.regularizer_weight
-        self.warmup_epochs = cfg.method_kwargs.warmup_epochs
-        self.regularization_epochs = cfg.method_kwargs.regularization_epochs
         self.layers = cfg.method_kwargs.layers
 
         # Scheduler params
-        self.reg_scheduler = cfg.method_kwargs.scheduler_name
+        self.configure_reg_scheduler(cfg.method_kwargs.reg_scheduler)
 
         # gather backbone info from timm
         self._vit_embed_dim: int = self.backbone.pos_embed.size(-1)
@@ -220,21 +218,34 @@ class MAE_REG(BaseMethod):
             "method_kwargs.norm_pix_loss",
             False,
         )
-        cfg.method_kwargs.regularizer_weight = omegaconf_select(
-            cfg, "method_kwargs.regularizer_weight", 0.0
-        )
         cfg.method_kwargs.layers = omegaconf_select(cfg, "method_kwargs.layers", [])
-        cfg.method_kwargs.warmup_epochs = omegaconf_select(
-            cfg, "method_kwargs.warmup_epochs", 0
-        )
-        cfg.method_kwargs.regularization_epochs = omegaconf_select(
-            cfg, "method_kwargs.regularization_epochs", -1
-        )
-        cfg.method_kwargs.scheduler_name = omegaconf_select(
-            cfg, "method_kwargs.scheduler_name", "none"
+        cfg.method_kwargs.scheduler = omegaconf_select(
+            cfg, "method_kwargs.scheduler", {"name": "constant", "weight": 1.0}
         )
 
         return cfg
+    
+    def configure_reg_scheduler(self, scheduler):
+        if scheduler.name == "triangle":
+            self.reg_scheduler = TriangleScheduler(
+                start_weight=scheduler.start_weight,
+                max_weight=scheduler.max_weight,
+                end_weight=scheduler.end_weight,
+                start_epoch=scheduler.start_epoch,
+                mid_epoch=scheduler.mid_epoch,
+                end_epoch=scheduler.end_epoch,
+            )
+        elif scheduler.name == "warmup":
+            self.reg_scheduler = WarmupScheduler(
+                base_weight=scheduler.base_weight,
+                warmup_epochs=scheduler.warmup_epochs,
+                weight=scheduler.weight,
+                reg_epochs=scheduler.reg_epochs,
+            )
+        else:
+            self.reg_scheduler = ConstantScheduler(
+                weight=scheduler.weight,
+            )
 
     @property
     def learnable_params(self) -> List[dict]:
@@ -351,13 +362,7 @@ class MAE_REG(BaseMethod):
                 }
             )
 
-        regularizer_weight = self.regularizer_weight
-        # TODO: Change the hardcoded 250
-        if self.reg_scheduler == "linear":
-            linear_scheduler = max((self.current_epoch - self.warmup_epochs) / 250, 0)
-            regularizer_weight *= linear_scheduler
-            print("Using linear scheduler")
-
+        regularizer_weight = self.reg_scheduler(self.current_epoch)
         regularization_loss_scaled = regularizer_loss * regularizer_weight
         metrics.update(
             {
@@ -366,23 +371,9 @@ class MAE_REG(BaseMethod):
             }
         )
 
-        regularization_loss_applied = regularization_loss_scaled
-        if self.current_epoch < self.warmup_epochs:
-            regularization_loss_applied = 0
-        elif self.regularization_epochs == -1:
-            regularization_loss_applied = regularization_loss_scaled
-        elif self.current_epoch < self.warmup_epochs + self.regularization_epochs:
-            regularization_loss_applied = regularization_loss_scaled
-        else:
-            regularization_loss_applied = 0
-
-        metrics.update(
-            {"train_regularization_loss_applied": regularization_loss_applied}
-        )
-
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
-        print(regularization_loss_applied)
-        return reconstruction_loss + class_loss + regularization_loss_applied
+        print(regularization_loss_scaled)
+        return reconstruction_loss + class_loss + regularization_loss_scaled
 
     def validation_step(
         self, batch: List[torch.Tensor], batch_idx: int, dataloader_idx: int = None
