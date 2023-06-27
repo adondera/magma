@@ -178,6 +178,8 @@ class MAE_REG(BaseMethod):
 
         self.manifold_regularizer = ManifoldRegularizer(return_metrics=True)
 
+        self.log_images = cfg.method_kwargs.log_images
+
         # decoder
         self.decoder = MAEDecoder(
             in_dim=self.features_dim,
@@ -222,6 +224,7 @@ class MAE_REG(BaseMethod):
         cfg.method_kwargs.scheduler = omegaconf_select(
             cfg, "method_kwargs.scheduler", {"name": "constant", "weight": 1.0}
         )
+        cfg.method_kwargs.log_images = omegaconf_select(cfg, "method_kwargs.log_images", False)
 
         return cfg
     
@@ -435,26 +438,27 @@ class MAE_REG(BaseMethod):
 
         log = {"val_loss": val_loss, "val_acc1": val_acc1, "val_acc5": val_acc5}
 
-        for layer in self.layers:
-            laplacian_matrix = tensor_mean(
-                outs, f"LaplacianMatrix_Layer{layer}", "batch_size"
-            )
-            self.logger.log_image(
-                key=f"LaplacianMatrixFig_Layer{layer}",
-                images=[get_heatmap(-laplacian_matrix, norm="log")],
-                caption=[f"Laplacian matrix at layer {layer}. Epoch {self.current_epoch}"],
-                step = self.current_epoch,
-            )
+        if self.log_images:
+            for layer in self.layers:
+                laplacian_matrix = tensor_mean(
+                    outs, f"LaplacianMatrix_Layer{layer}", "batch_size"
+                )
+                self.logger.log_image(
+                    key=f"LaplacianMatrixFig_Layer{layer}",
+                    images=[get_heatmap(-laplacian_matrix, norm="log")],
+                    caption=[f"Laplacian matrix at layer {layer}. Epoch {self.current_epoch}"],
+                    step = self.current_epoch,
+                )
 
-            similarity_matrix = tensor_mean(
-                outs, f"SimilarityMatrix_Layer{layer}", "batch_size"
-            )
-            self.logger.log_image(
-                key=f"SimilarityMatrixFig_Layer{layer}",
-                images=[get_heatmap(similarity_matrix)],
-                caption=[f"Similarity matrix at layer {layer}. Epoch {self.current_epoch}"],
-                step = self.current_epoch,
-            )
+                similarity_matrix = tensor_mean(
+                    outs, f"SimilarityMatrix_Layer{layer}", "batch_size"
+                )
+                self.logger.log_image(
+                    key=f"SimilarityMatrixFig_Layer{layer}",
+                    images=[get_heatmap(similarity_matrix)],
+                    caption=[f"Similarity matrix at layer {layer}. Epoch {self.current_epoch}"],
+                    step = self.current_epoch,
+                )
 
         if self.knn_eval and not self.trainer.sanity_checking:
             val_knn_acc1, val_knn_acc5 = self.knn.compute()
