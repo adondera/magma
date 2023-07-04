@@ -20,6 +20,7 @@
 from typing import Dict, List, Sequence
 from matplotlib import figure
 import torch
+import seaborn as sns
 
 
 def accuracy_at_k(
@@ -92,7 +93,7 @@ def tensor_mean(outputs: List[Dict], key: str, batch_size_key: str) -> torch.Ten
     return tensors.mean(dim=0)
 
 
-def get_heatmap(matrix: torch.Tensor, norm: str = None) -> figure.Figure:
+def get_heatmap(matrix: torch.Tensor, norm: str = None, title: str = "") -> figure.Figure:
     """
     Returns a heatmap of the given matrix.
     
@@ -104,5 +105,7 @@ def get_heatmap(matrix: torch.Tensor, norm: str = None) -> figure.Figure:
     """
     fig = figure.Figure()
     ax = fig.subplots(1)
-    ax.imshow(matrix.detach().cpu().numpy(), norm=norm)
+    ax.set_title(title)
+    sns.heatmap(matrix.detach().cpu().numpy(), ax=ax, norm=norm, vmin=0, vmax=1)
+    # ax.imshow(matrix.detach().cpu().numpy(), norm=norm, vmin=0, vmax=1)
     return fig

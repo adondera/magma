@@ -180,6 +180,13 @@ class MAE_REG(BaseMethod):
 
         self.log_images = cfg.method_kwargs.log_images
 
+        self.validation_mean_embeddings = {
+            class_idx: torch.zeros(self.features_dim, device=self.device) for class_idx in range(self.num_classes)
+        }
+        self.validation_class_counts = {
+            class_idx: 0 for class_idx in range(self.num_classes)
+        }
+
         # decoder
         self.decoder = MAEDecoder(
             in_dim=self.features_dim,
@@ -408,6 +415,17 @@ class MAE_REG(BaseMethod):
             similarity_matrices[f"SimilarityMatrix_Layer{layer}"] = similarity_matrix
             laplacian_matrices[f"LaplacianMatrix_Layer{layer}"] = laplacian_matrix
 
+        # Necessary for the sanity check runs because of https://github.com/Lightning-AI/lightning/issues/13108
+        if out['feats'].device != self.validation_mean_embeddings[0].device:
+            self.validation_mean_embeddings = {
+                class_idx: embedding.to(out['feats'].device) for class_idx, embedding in self.validation_mean_embeddings.items()
+            }
+            print("Got here")
+
+        for idx, target in enumerate(targets):
+            self.validation_mean_embeddings[target.item()] += out["feats"][idx]
+            self.validation_class_counts[target.item()] += 1
+
         if self.knn_eval and not self.trainer.sanity_checking:
             self.knn.update(
                 test_features=out.pop("feats").detach(), test_targets=targets.detach()
@@ -443,25 +461,107 @@ class MAE_REG(BaseMethod):
                 laplacian_matrix = tensor_mean(
                     outs, f"LaplacianMatrix_Layer{layer}", "batch_size"
                 )
+                logged_laplacian_matrix = torch.eye(laplacian_matrix.shape[0], device=laplacian_matrix.device) - laplacian_matrix
+                title = f"Laplacian matrix at layer {layer}. Epoch {self.current_epoch}"
                 self.logger.log_image(
-                    key=f"LaplacianMatrixFig_Layer{layer}",
-                    images=[get_heatmap(-laplacian_matrix, norm="log")],
-                    caption=[f"Laplacian matrix at layer {layer}. Epoch {self.current_epoch}"],
+                    key=f"LaplacianMatrixLinearScale_Layer{layer}",
+                    images=[get_heatmap(logged_laplacian_matrix, norm="linear", title=title)],
+                    caption=[title],
+                    step = self.current_epoch,
+                )
+                self.logger.log_image(
+                    key=f"LaplacianMatrixLogScale_Layer{layer}",
+                    images=[get_heatmap(logged_laplacian_matrix, norm="log", title=title)],
+                    caption=[title],
+                    step = self.current_epoch,
+                )
+                self.logger.log_image(
+                    key=f"LaplacianMatrixNoNorm_Layer{layer}",
+                    images=[get_heatmap(logged_laplacian_matrix, title=title)],
+                    caption=[title],
                     step = self.current_epoch,
                 )
 
+                title = f"Similarity matrix at layer {layer}. Epoch {self.current_epoch}"
                 similarity_matrix = tensor_mean(
                     outs, f"SimilarityMatrix_Layer{layer}", "batch_size"
                 )
                 self.logger.log_image(
-                    key=f"SimilarityMatrixFig_Layer{layer}",
-                    images=[get_heatmap(similarity_matrix)],
-                    caption=[f"Similarity matrix at layer {layer}. Epoch {self.current_epoch}"],
+                    key=f"SimilarityMatrixLinearScale_Layer{layer}",
+                    images=[get_heatmap(similarity_matrix, norm="linear", title=title)],
+                    caption=[title],
                     step = self.current_epoch,
                 )
+                self.logger.log_image(
+                    key=f"SimilarityMatrixLogScale_Layer{layer}",
+                    images=[get_heatmap(similarity_matrix, norm="log", title=title)],
+                    caption=[title],
+                    step = self.current_epoch,
+                )
+                self.logger.log_image(
+                    key=f"SimilarityMatrixNoNorm_Layer{layer}",
+                    images=[get_heatmap(similarity_matrix, title=title)],
+                    caption=[title],
+                    step = self.current_epoch,
+                )
+            
+            # Log the mean embeddings laplacian/similarity matrices
+            for class_idx in range(self.num_classes):
+                # This can be 0 during the sanity check runs
+                if self.validation_class_counts[class_idx]:
+                    self.validation_mean_embeddings[class_idx] /= self.validation_class_counts[class_idx]
+            tensors = torch.stack([v for (_, v) in sorted(self.validation_mean_embeddings.items(), key=lambda item: item[0])])
+            similarity_matrix = get_similarity_matrix(tensors, rbf_scale=1.0, scaling_factor=False)
+            laplacian_matrix = get_laplacian(similarity_matrix, normalized=True)
+            title = f"Similarity matrix of mean embeddings per class. Epoch {self.current_epoch}"
+            self.logger.log_image(
+                    key=f"MeanEmbeddingSimilarityMatrixLinearScale",
+                    images=[get_heatmap(similarity_matrix, norm="linear", title=title)],
+                    caption=[title],
+                    step = self.current_epoch,
+            )
+            self.logger.log_image(
+                    key=f"MeanEmbeddingSimilarityMatrixLogScale",
+                    images=[get_heatmap(similarity_matrix, norm="log", title=title)],
+                    caption=[title],
+                    step = self.current_epoch,
+            )
+            self.logger.log_image(
+                    key=f"MeanEmbeddingSimilarityMatrixNoNorm",
+                    images=[get_heatmap(similarity_matrix, title=title)],
+                    caption=[title],
+                    step = self.current_epoch,
+            )
+            title = f"Laplacian matrix of mean embeddings per class. Epoch {self.current_epoch}"
+            logged_laplacian_matrix = torch.eye(laplacian_matrix.shape[0], device=laplacian_matrix.device) - laplacian_matrix
+            self.logger.log_image(
+                    key=f"MeanEmbeddingLaplacianMatrixLinearScale",
+                    images=[get_heatmap(logged_laplacian_matrix, norm="linear", title=title)],
+                    caption=[title],
+                    step = self.current_epoch,
+            )
+            self.logger.log_image(
+                    key=f"MeanEmbeddingLaplacianMatrixLogScale",
+                    images=[get_heatmap(logged_laplacian_matrix, norm="log", title=title)],
+                    caption=[title],
+                    step = self.current_epoch,
+            )
+            self.logger.log_image(
+                    key=f"MeanEmbeddingLaplacianMatrixNoNorm",
+                    images=[get_heatmap(logged_laplacian_matrix, title=title)],
+                    caption=[title],
+                    step = self.current_epoch,
+            )
+                
 
         if self.knn_eval and not self.trainer.sanity_checking:
             val_knn_acc1, val_knn_acc5 = self.knn.compute()
             log.update({"val_knn_acc1": val_knn_acc1, "val_knn_acc5": val_knn_acc5})
 
         self.log_dict(log, sync_dist=True)
+        self.validation_mean_embeddings = {
+            class_idx: torch.zeros(self.features_dim, device=self.device) for class_idx in range(self.num_classes)
+        }
+        self.validation_class_counts = {
+            class_idx: 0 for class_idx in range(self.num_classes)
+        }
