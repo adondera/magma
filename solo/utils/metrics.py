@@ -19,6 +19,7 @@
 
 from typing import Dict, List, Sequence
 from matplotlib import figure
+from matplotlib import colors
 import torch
 import seaborn as sns
 
@@ -93,12 +94,14 @@ def tensor_mean(outputs: List[Dict], key: str, batch_size_key: str) -> torch.Ten
     return tensors.mean(dim=0)
 
 
-def get_heatmap(matrix: torch.Tensor, norm: str = None, title: str = "") -> figure.Figure:
+def get_heatmap(matrix: torch.Tensor, norm: colors.Normalize = None, title: str = "") -> figure.Figure:
     """
     Returns a heatmap of the given matrix.
     
     Args:
         matrix (torch.Tensor): matrix to plot.
+        norm (colors.Normalize, optional): normalization to apply to the matrix. Defaults to None.
+        title (str, optional): title of the plot. Defaults to "".
 
     Returns:
         figure.Figure: heatmap of the matrix.
@@ -106,6 +109,5 @@ def get_heatmap(matrix: torch.Tensor, norm: str = None, title: str = "") -> figu
     fig = figure.Figure()
     ax = fig.subplots(1)
     ax.set_title(title)
-    sns.heatmap(matrix.detach().cpu().numpy(), ax=ax, norm=norm, vmin=0, vmax=1)
-    # ax.imshow(matrix.detach().cpu().numpy(), norm=norm, vmin=0, vmax=1)
+    sns.heatmap(matrix.detach().cpu().numpy(), ax=ax, norm=norm)
     return fig

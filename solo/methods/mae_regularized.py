@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Sequence
 import omegaconf
 import torch
 import torch.nn as nn
+from matplotlib import colors
 from solo.losses.mae import mae_loss_func
 from solo.methods.base import BaseMethod
 from solo.losses.manifold_regularizer import ManifoldRegularizer
@@ -462,22 +463,17 @@ class MAE_REG(BaseMethod):
                     outs, f"LaplacianMatrix_Layer{layer}", "batch_size"
                 )
                 logged_laplacian_matrix = torch.eye(laplacian_matrix.shape[0], device=laplacian_matrix.device) - laplacian_matrix
+                log.update({f"MaxValueLoggedLaplacianMatrix_Layer{layer}": logged_laplacian_matrix.max()})
                 title = f"Laplacian matrix at layer {layer}. Epoch {self.current_epoch}"
                 self.logger.log_image(
                     key=f"LaplacianMatrixLinearScale_Layer{layer}",
-                    images=[get_heatmap(logged_laplacian_matrix, norm="linear", title=title)],
+                    images=[get_heatmap(logged_laplacian_matrix, norm=colors.Normalize(vmin=0, vmax=0.1), title=title)],
                     caption=[title],
                     step = self.current_epoch,
                 )
                 self.logger.log_image(
                     key=f"LaplacianMatrixLogScale_Layer{layer}",
-                    images=[get_heatmap(logged_laplacian_matrix, norm="log", title=title)],
-                    caption=[title],
-                    step = self.current_epoch,
-                )
-                self.logger.log_image(
-                    key=f"LaplacianMatrixNoNorm_Layer{layer}",
-                    images=[get_heatmap(logged_laplacian_matrix, title=title)],
+                    images=[get_heatmap(logged_laplacian_matrix, norm=colors.LogNorm(vmin=0, vmax=0.1), title=title)],
                     caption=[title],
                     step = self.current_epoch,
                 )
@@ -486,21 +482,16 @@ class MAE_REG(BaseMethod):
                 similarity_matrix = tensor_mean(
                     outs, f"SimilarityMatrix_Layer{layer}", "batch_size"
                 )
+                log.update({f"MaxValueSimilarityMatrix_Layer{layer}": similarity_matrix.max()})
                 self.logger.log_image(
                     key=f"SimilarityMatrixLinearScale_Layer{layer}",
-                    images=[get_heatmap(similarity_matrix, norm="linear", title=title)],
+                    images=[get_heatmap(similarity_matrix, norm=colors.Normalize(vmin=0, vmax=1), title=title)],
                     caption=[title],
                     step = self.current_epoch,
                 )
                 self.logger.log_image(
                     key=f"SimilarityMatrixLogScale_Layer{layer}",
-                    images=[get_heatmap(similarity_matrix, norm="log", title=title)],
-                    caption=[title],
-                    step = self.current_epoch,
-                )
-                self.logger.log_image(
-                    key=f"SimilarityMatrixNoNorm_Layer{layer}",
-                    images=[get_heatmap(similarity_matrix, title=title)],
+                    images=[get_heatmap(similarity_matrix, norm=colors.LogNorm(vmin=0, vmax=1), title=title)],
                     caption=[title],
                     step = self.current_epoch,
                 )
@@ -514,41 +505,25 @@ class MAE_REG(BaseMethod):
             similarity_matrix = get_similarity_matrix(tensors, rbf_scale=1.0, scaling_factor=False)
             laplacian_matrix = get_laplacian(similarity_matrix, normalized=True)
             title = f"Similarity matrix of mean embeddings per class. Epoch {self.current_epoch}"
+            log.update({"MaxValueSimilarityMatrix": similarity_matrix.max()})
             self.logger.log_image(
-                    key=f"MeanEmbeddingSimilarityMatrixLinearScale",
-                    images=[get_heatmap(similarity_matrix, norm="linear", title=title)],
-                    caption=[title],
-                    step = self.current_epoch,
-            )
-            self.logger.log_image(
-                    key=f"MeanEmbeddingSimilarityMatrixLogScale",
-                    images=[get_heatmap(similarity_matrix, norm="log", title=title)],
-                    caption=[title],
-                    step = self.current_epoch,
-            )
-            self.logger.log_image(
-                    key=f"MeanEmbeddingSimilarityMatrixNoNorm",
-                    images=[get_heatmap(similarity_matrix, title=title)],
+                    key=f"MeanEmbeddingSimilarityMatrix",
+                    images=[get_heatmap(similarity_matrix, norm=colors.Normalize(vmin=0, vmax=1), title=title)],
                     caption=[title],
                     step = self.current_epoch,
             )
             title = f"Laplacian matrix of mean embeddings per class. Epoch {self.current_epoch}"
             logged_laplacian_matrix = torch.eye(laplacian_matrix.shape[0], device=laplacian_matrix.device) - laplacian_matrix
+            log.update({"MaxValueLoggedLaplacianMatrix": logged_laplacian_matrix.max()})
             self.logger.log_image(
                     key=f"MeanEmbeddingLaplacianMatrixLinearScale",
-                    images=[get_heatmap(logged_laplacian_matrix, norm="linear", title=title)],
+                    images=[get_heatmap(logged_laplacian_matrix, norm=colors.Normalize(vmin=0, vmax=1), title=title)],
                     caption=[title],
                     step = self.current_epoch,
             )
             self.logger.log_image(
                     key=f"MeanEmbeddingLaplacianMatrixLogScale",
-                    images=[get_heatmap(logged_laplacian_matrix, norm="log", title=title)],
-                    caption=[title],
-                    step = self.current_epoch,
-            )
-            self.logger.log_image(
-                    key=f"MeanEmbeddingLaplacianMatrixNoNorm",
-                    images=[get_heatmap(logged_laplacian_matrix, title=title)],
+                    images=[get_heatmap(logged_laplacian_matrix, norm=colors.LogNorm(vmin=0, vmax=0.1), title=title)],
                     caption=[title],
                     step = self.current_epoch,
             )
