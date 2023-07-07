@@ -473,7 +473,7 @@ class MAE_REG(BaseMethod):
                 )
                 self.logger.log_image(
                     key=f"LaplacianMatrixLogScale_Layer{layer}",
-                    images=[get_heatmap(logged_laplacian_matrix, norm=colors.LogNorm(vmin=0, vmax=0.1), title=title)],
+                    images=[get_heatmap(logged_laplacian_matrix, norm=colors.LogNorm(vmax=0.1), title=title)],
                     caption=[title],
                     step = self.current_epoch,
                 )
@@ -491,7 +491,7 @@ class MAE_REG(BaseMethod):
                 )
                 self.logger.log_image(
                     key=f"SimilarityMatrixLogScale_Layer{layer}",
-                    images=[get_heatmap(similarity_matrix, norm=colors.LogNorm(vmin=0, vmax=1), title=title)],
+                    images=[get_heatmap(similarity_matrix, norm=colors.LogNorm(vmax=1), title=title)],
                     caption=[title],
                     step = self.current_epoch,
                 )
@@ -523,7 +523,7 @@ class MAE_REG(BaseMethod):
             )
             self.logger.log_image(
                     key=f"MeanEmbeddingLaplacianMatrixLogScale",
-                    images=[get_heatmap(logged_laplacian_matrix, norm=colors.LogNorm(vmin=0, vmax=0.1), title=title)],
+                    images=[get_heatmap(logged_laplacian_matrix, norm=colors.LogNorm(vmax=0.1), title=title)],
                     caption=[title],
                     step = self.current_epoch,
             )
