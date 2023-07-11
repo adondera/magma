@@ -463,19 +463,12 @@ class MAE_REG(BaseMethod):
                 )
                 logged_laplacian_matrix = torch.eye(laplacian_matrix.shape[0], device=laplacian_matrix.device) - laplacian_matrix
                 log.update({f"MaxValueLoggedLaplacianMatrix_Layer{layer}": logged_laplacian_matrix.max()})
-                log.update({f"MinValueLoggedLaplacianMatrix_Layer{layer}": logged_laplacian_matrix.min()})
                 log.update({f"MeanValueLoggedLaplacianMatrix_Layer{layer}": logged_laplacian_matrix.mean()})
                 log.update({f"StdValueLoggedLaplacianMatrix_Layer{layer}": logged_laplacian_matrix.std()})
                 title = f"Laplacian matrix at layer {layer}. Epoch {self.current_epoch}"
                 self.logger.log_image(
-                    key=f"LaplacianMatrixLinearScale_Layer{layer}",
-                    images=[get_heatmap(logged_laplacian_matrix, norm=colors.Normalize(vmin=0, vmax=1e-2), title=title)],
-                    caption=[title],
-                    step = self.current_epoch,
-                )
-                self.logger.log_image(
-                    key=f"LaplacianMatrixLogScale_Layer{layer}",
-                    images=[get_heatmap(logged_laplacian_matrix, norm=colors.LogNorm(vmax=1e-2), title=title)],
+                    key=f"LaplacianMatrix_Layer{layer}",
+                    images=[get_heatmap(logged_laplacian_matrix, norm=colors.LogNorm(), title=title)],
                     caption=[title],
                     step = self.current_epoch,
                 )
@@ -485,18 +478,11 @@ class MAE_REG(BaseMethod):
                     outs, f"SimilarityMatrix_Layer{layer}", "batch_size"
                 )
                 log.update({f"MaxValueSimilarityMatrix_Layer{layer}": similarity_matrix.max()})
-                log.update({f"MinValueSimilarityMatrix_Layer{layer}": similarity_matrix.min()})
                 log.update({f"MeanValueSimilarityMatrix_Layer{layer}": similarity_matrix.mean()})
                 log.update({f"StdValueSimilarityMatrix_Layer{layer}": similarity_matrix.std()})
                 self.logger.log_image(
-                    key=f"SimilarityMatrixLinearScale_Layer{layer}",
-                    images=[get_heatmap(similarity_matrix, norm=colors.Normalize(vmin=0, vmax=0.7), title=title)],
-                    caption=[title],
-                    step = self.current_epoch,
-                )
-                self.logger.log_image(
-                    key=f"SimilarityMatrixLogScale_Layer{layer}",
-                    images=[get_heatmap(similarity_matrix, norm=colors.LogNorm(vmax=0.7), title=title)],
+                    key=f"SimilarityMatrix_Layer{layer}",
+                    images=[get_heatmap(similarity_matrix, norm=colors.Normalize(vmin=0, vmax=1), title=title)],
                     caption=[title],
                     step = self.current_epoch,
                 )
@@ -511,7 +497,6 @@ class MAE_REG(BaseMethod):
             laplacian_matrix = get_laplacian(similarity_matrix, normalized=True)
             title = f"Similarity matrix of mean embeddings per class. Epoch {self.current_epoch}"
             log.update({"MaxValueSimilarityMatrix": similarity_matrix.max()})
-            log.update({"MinValueSimilarityMatrix": similarity_matrix.min()})
             log.update({"MeanValueSimilarityMatrix": similarity_matrix.mean()})
             log.update({"StdValueSimilarityMatrix": similarity_matrix.std()})
             self.logger.log_image(
@@ -523,18 +508,11 @@ class MAE_REG(BaseMethod):
             title = f"Laplacian matrix of mean embeddings per class. Epoch {self.current_epoch}"
             logged_laplacian_matrix = torch.eye(laplacian_matrix.shape[0], device=laplacian_matrix.device) - laplacian_matrix
             log.update({"MaxValueLoggedLaplacianMatrix": logged_laplacian_matrix.max()})
-            log.update({"MinValueLoggedLaplacianMatrix": logged_laplacian_matrix.min()})
             log.update({"MeanValueLoggedLaplacianMatrix": logged_laplacian_matrix.mean()})
             log.update({"StdValueLoggedLaplacianMatrix": logged_laplacian_matrix.std()})
             self.logger.log_image(
-                    key=f"MeanEmbeddingLaplacianMatrixLinearScale",
-                    images=[get_heatmap(logged_laplacian_matrix, norm=colors.Normalize(vmin=0, vmax=0.14), title=title)],
-                    caption=[title],
-                    step = self.current_epoch,
-            )
-            self.logger.log_image(
-                    key=f"MeanEmbeddingLaplacianMatrixLogScale",
-                    images=[get_heatmap(logged_laplacian_matrix, norm=colors.LogNorm(vmin=1e-5, vmax=0.14), title=title)],
+                    key=f"MeanEmbeddingLaplacianMatrix",
+                    images=[get_heatmap(logged_laplacian_matrix, norm=colors.LogNorm(vmin=1e-5), title=title)],
                     caption=[title],
                     step = self.current_epoch,
             )

@@ -22,7 +22,6 @@ class ManifoldRegularizer():
                 laplacian_energy = sum(abs(x - 1) for x in sorted_eigvals)
 
                 metrics = {
-                    "Number of zero eigenvalues": zero_eigvals,
                     "Second smallest eigenvalue": second_smallest_eigenvalue,
                     "Spectral gap": spectral_gap,
                     "Laplacian energy": laplacian_energy,
