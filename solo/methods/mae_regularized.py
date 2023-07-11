@@ -516,6 +516,12 @@ class MAE_REG(BaseMethod):
                     caption=[title],
                     step = self.current_epoch,
             )
+            self.logger.log_image(
+                    key=f"MeanEmbeddingLaplacianMatrixLinearScale",
+                    images=[get_heatmap(logged_laplacian_matrix, norm=colors.Normalize(vmin=0, vmax=1), title=title)],
+                    caption=[title],
+                    step = self.current_epoch,
+            )
                 
 
         if self.knn_eval and not self.trainer.sanity_checking:

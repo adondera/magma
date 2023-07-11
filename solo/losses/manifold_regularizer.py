@@ -16,7 +16,6 @@ class ManifoldRegularizer():
             with torch.no_grad():
                 sorted_eigvals = torch.linalg.eigvals(laplacian).real.cpu().numpy()
                 sorted_eigvals.sort()
-                zero_eigvals = sorted_eigvals.size - np.count_nonzero(sorted_eigvals)
                 second_smallest_eigenvalue = sorted_eigvals[1]
                 spectral_gap = sorted_eigvals[1] - sorted_eigvals[0]
                 laplacian_energy = sum(abs(x - 1) for x in sorted_eigvals)
