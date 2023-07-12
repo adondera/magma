@@ -33,6 +33,7 @@ import torch.nn as nn
 import umap
 import wandb
 from matplotlib import pyplot as plt
+from matplotlib import figure
 from omegaconf import DictConfig
 from pytorch_lightning.callbacks import Callback
 from solo.utils.misc import gather, omegaconf_select
@@ -140,8 +141,9 @@ class AutoUMAP(Callback):
         df_feats["feat_1"] = data[:, 0]
         df_feats["feat_2"] = data[:, 1]
         df_feats["Y"] = Y
-        plt.figure(figsize=(9, 9))
-        ax = sns.scatterplot(
+        fig = figure.Figure(figsize=(9, 9))
+        ax = fig.subplots(1)
+        sns.scatterplot(
             x="feat_1",
             y="feat_2",
             hue="Y",
@@ -149,9 +151,11 @@ class AutoUMAP(Callback):
             data=df_feats,
             legend="full",
             alpha=0.3,
+            ax=ax
         )
         ax.set(xlabel="", ylabel="", xticklabels=[], yticklabels=[])
         ax.tick_params(left=False, right=False, bottom=False, top=False)
+        ax.set_title(f"UMAP at epoch {trainer.current_epoch}")
 
         # manually improve quality of imagenet umaps
         if num_classes > 100:
