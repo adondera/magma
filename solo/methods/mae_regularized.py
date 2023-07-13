@@ -510,18 +510,19 @@ class MAE_REG(BaseMethod):
             log.update({"MaxValueLoggedLaplacianMatrix": logged_laplacian_matrix.max()})
             log.update({"MeanValueLoggedLaplacianMatrix": logged_laplacian_matrix.mean()})
             log.update({"StdValueLoggedLaplacianMatrix": logged_laplacian_matrix.std()})
+            logged_laplacian_matrix = logged_laplacian_matrix.softmax(dim=-1)
             self.logger.log_image(
                     key=f"MeanEmbeddingLaplacianMatrix",
-                    images=[get_heatmap(logged_laplacian_matrix, norm=colors.LogNorm(vmin=1e-5), title=title)],
+                    images=[get_heatmap(logged_laplacian_matrix, title=title)],
                     caption=[title],
                     step = self.current_epoch,
             )
-            self.logger.log_image(
-                    key=f"MeanEmbeddingLaplacianMatrixLinearScale",
-                    images=[get_heatmap(logged_laplacian_matrix, norm=colors.Normalize(vmin=0, vmax=1), title=title)],
-                    caption=[title],
-                    step = self.current_epoch,
-            )
+            # self.logger.log_image(
+            #         key=f"MeanEmbeddingLaplacianMatrixLinearScale",
+            #         images=[get_heatmap(logged_laplacian_matrix, norm=colors.Normalize(vmin=0, vmax=1), title=title)],
+            #         caption=[title],
+            #         step = self.current_epoch,
+            # )
                 
 
         if self.knn_eval and not self.trainer.sanity_checking:
