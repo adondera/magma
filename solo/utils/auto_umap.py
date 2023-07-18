@@ -163,19 +163,24 @@ class AutoUMAP(Callback):
         else:
             anchor = (0.5, 1.35)
 
-        plt.legend(loc="upper center", bbox_to_anchor=anchor, ncol=math.ceil(num_classes / 10))
-        plt.tight_layout()
+        fig.legend(loc="upper center", bbox_to_anchor=anchor, ncol=math.ceil(num_classes / 10))
+        fig.tight_layout()
 
         if isinstance(trainer.logger, pl.loggers.WandbLogger):
-            wandb.log(
-                {wandb_name: wandb.Image(ax)},
-                commit=False,
-            )
+            trainer.logger.log_image(
+                    key=f"{wandb_name}",
+                    images=[fig],
+                    step = trainer.current_epoch,
+                )
+            # wandb.log(
+            #     {wandb_name: wandb.Image(ax)},
+            #     commit=False,
+            # )
 
         # save plot locally as well
         # epoch = trainer.current_epoch  # type: ignore
         # plt.savefig(self.path / self.umap_placeholder.format(epoch))
-        plt.close()
+        # plt.close()
 
     def plot(self, trainer: pl.Trainer, module: pl.LightningModule):
         """Produces a UMAP visualization by forwarding all data of the
@@ -231,7 +236,7 @@ class AutoUMAP(Callback):
             num_classes = len(torch.unique(Y))
             Y = Y.numpy()
 
-            backbone_features = umap.UMAP(n_components=2).fit_transform(backbone_features)
+            backbone_features = umap.UMAP(n_components=2, random_state=42).fit_transform(backbone_features)
             # projector_features = umap.UMAP(n_components=2).fit_transform(projector_features)
             # ta_features = umap.UMAP(n_components=2).fit_transform(ta_features)
 
@@ -260,9 +265,8 @@ class AutoUMAP(Callback):
             }
 
             if isinstance(trainer.logger, pl.loggers.WandbLogger):
-                wandb.log(
+                trainer.logger.log_metrics(
                     metrics_dict,
-                    commit=False,
                 )
 
             self.plot_umap(backbone_features, Y, trainer, "validation_umap", num_classes)
