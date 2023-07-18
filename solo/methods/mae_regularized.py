@@ -26,7 +26,7 @@ from matplotlib import colors
 from solo.losses.mae import mae_loss_func
 from solo.methods.base import BaseMethod
 from solo.losses.manifold_regularizer import ManifoldRegularizer
-from solo.utils.embedding_propagation import get_similarity_matrix, get_laplacian
+from solo.utils.embedding_propagation import get_similarity_matrix, get_laplacian, embedding_propagation
 from solo.utils.misc import generate_2d_sincos_pos_embed, omegaconf_select
 from solo.utils.weight_schedulers import TriangleScheduler, WarmupScheduler, ConstantScheduler
 from solo.utils.metrics import weighted_mean, tensor_mean, get_heatmap
@@ -472,6 +472,12 @@ class MAE_REG(BaseMethod):
                     caption=[title],
                     step = self.current_epoch,
                 )
+                self.logger.log_image(
+                    key=f"LaplacianMatrixSoftmax_Layer{layer}",
+                    images=[get_heatmap(logged_laplacian_matrix.softmax(dim=-1), title=title)],
+                    caption=[title],
+                    step = self.current_epoch,
+                )
 
                 title = f"Similarity matrix at layer {layer}. Epoch {self.current_epoch}"
                 similarity_matrix = tensor_mean(
@@ -514,6 +520,12 @@ class MAE_REG(BaseMethod):
             self.logger.log_image(
                     key=f"MeanEmbeddingLaplacianMatrix",
                     images=[get_heatmap(logged_laplacian_matrix, title=title)],
+                    caption=[title],
+                    step = self.current_epoch,
+            )
+            self.logger.log_image(
+                    key=f"MeanEmbeddingLaplacianMatrixSoftmax",
+                    images=[get_heatmap(logged_laplacian_matrix.softmax(dim=-1), title=title)],
                     caption=[title],
                     step = self.current_epoch,
             )
