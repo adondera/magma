@@ -383,7 +383,6 @@ class MAE_REG(BaseMethod):
         )
 
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
-        print(regularization_loss_scaled)
         return reconstruction_loss + class_loss + regularization_loss_scaled
 
     def validation_step(
@@ -408,23 +407,24 @@ class MAE_REG(BaseMethod):
 
         laplacian_matrices = {}
         similarity_matrices = {}
-        for layer in self.layers:
-            similarity_matrix = get_similarity_matrix(
-                out[f"mean_block_{layer}"], rbf_scale=1.0, scaling_factor=False
-            )
-            laplacian_matrix = get_laplacian(similarity_matrix, normalized=True)
-            similarity_matrices[f"SimilarityMatrix_Layer{layer}"] = similarity_matrix
-            laplacian_matrices[f"LaplacianMatrix_Layer{layer}"] = laplacian_matrix
+        if self.log_images:
+            for layer in self.layers:
+                similarity_matrix = get_similarity_matrix(
+                    out[f"mean_block_{layer}"], rbf_scale=1.0, scaling_factor=False
+                )
+                laplacian_matrix = get_laplacian(similarity_matrix, normalized=True)
+                similarity_matrices[f"SimilarityMatrix_Layer{layer}"] = similarity_matrix
+                laplacian_matrices[f"LaplacianMatrix_Layer{layer}"] = laplacian_matrix
 
-        # Necessary for the sanity check runs because of https://github.com/Lightning-AI/lightning/issues/13108
-        if out['feats'].device != self.validation_mean_embeddings[0].device:
-            self.validation_mean_embeddings = {
-                class_idx: embedding.to(out['feats'].device) for class_idx, embedding in self.validation_mean_embeddings.items()
-            }
+            # Necessary for the sanity check runs because of https://github.com/Lightning-AI/lightning/issues/13108
+            if out['feats'].device != self.validation_mean_embeddings[0].device:
+                self.validation_mean_embeddings = {
+                    class_idx: embedding.to(out['feats'].device) for class_idx, embedding in self.validation_mean_embeddings.items()
+                }
 
-        for idx, target in enumerate(targets):
-            self.validation_mean_embeddings[target.item()] += out["feats"][idx]
-            self.validation_class_counts[target.item()] += 1
+            for idx, target in enumerate(targets):
+                self.validation_mean_embeddings[target.item()] += out["feats"][idx]
+                self.validation_class_counts[target.item()] += 1
 
         if self.knn_eval and not self.trainer.sanity_checking:
             self.knn.update(
@@ -535,6 +535,12 @@ class MAE_REG(BaseMethod):
             #         caption=[title],
             #         step = self.current_epoch,
             # )
+            self.validation_mean_embeddings = {
+            class_idx: torch.zeros(self.features_dim, device=self.device) for class_idx in range(self.num_classes)
+            }
+            self.validation_class_counts = {
+                class_idx: 0 for class_idx in range(self.num_classes)
+            }
                 
 
         if self.knn_eval and not self.trainer.sanity_checking:
@@ -542,9 +548,3 @@ class MAE_REG(BaseMethod):
             log.update({"val_knn_acc1": val_knn_acc1, "val_knn_acc5": val_knn_acc5})
 
         self.log_dict(log, sync_dist=True)
-        self.validation_mean_embeddings = {
-            class_idx: torch.zeros(self.features_dim, device=self.device) for class_idx in range(self.num_classes)
-        }
-        self.validation_class_counts = {
-            class_idx: 0 for class_idx in range(self.num_classes)
-        }

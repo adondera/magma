@@ -1,7 +1,6 @@
 import numpy as np
 import torch
 from solo.utils.embedding_propagation import get_similarity_matrix, get_laplacian
-from matplotlib import figure
 
 class ManifoldRegularizer():
     def __init__(self, return_metrics: bool = False):
@@ -12,6 +11,7 @@ class ManifoldRegularizer():
     def manifold_regularizer_loss(self, x: torch.Tensor, y: torch.Tensor):
         weights_matrix = get_similarity_matrix(x, rbf_scale=1.0, scaling_factor=False)
         laplacian = get_laplacian(weights_matrix, normalized=True)
+        metrics = {}
         if self.return_metrics:
             with torch.no_grad():
                 sorted_eigvals = torch.linalg.eigvals(laplacian).real.cpu().numpy()

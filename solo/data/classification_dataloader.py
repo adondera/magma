@@ -128,6 +128,23 @@ def prepare_transforms(dataset: str) -> Tuple[nn.Module, nn.Module]:
         ),
     }
 
+    tiny_imagenet_pipeline = {
+        "T_train": transforms.Compose(
+            [
+                transforms.RandomResizedCrop(size=64, scale=(0.08, 1.0)),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=(0.480, 0.448, 0.398), std=(0.277, 0.269, 0.282)),
+            ]
+        ),
+        "T_val": transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Normalize(mean=(0.480, 0.448, 0.398), std=(0.277, 0.269, 0.282)),
+            ]
+        ),
+    }
+
     custom_pipeline = build_custom_pipeline()
 
     pipelines = {
@@ -137,6 +154,7 @@ def prepare_transforms(dataset: str) -> Tuple[nn.Module, nn.Module]:
         "imagenet100": imagenet_pipeline,
         "imagenet": imagenet_pipeline,
         "imagenette": imagenet_pipeline,
+        "tiny-imagenet": tiny_imagenet_pipeline,
         "custom": custom_pipeline,
     }
 
@@ -186,7 +204,7 @@ def prepare_datasets(
         sandbox_folder = Path(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
         val_data_path = sandbox_folder / "datasets"
 
-    assert dataset in ["cifar10", "cifar100", "stl10", "imagenet", "imagenet100", "imagenette", "custom"]
+    assert dataset in ["cifar10", "cifar100", "stl10", "imagenet", "imagenet100", "imagenette", "tiny-imagenet", "custom"]
 
     if dataset in ["cifar10", "cifar100"]:
         DatasetClass = vars(torchvision.datasets)[dataset.upper()]
@@ -218,7 +236,7 @@ def prepare_datasets(
             transform=T_val,
         )
 
-    elif dataset in ["imagenet", "imagenet100", "imagenette", "custom"]:
+    elif dataset in ["imagenet", "imagenet100", "imagenette", "tiny-imagenet", "custom"]:
         if data_format == "h5":
             assert _h5_available
             train_dataset = H5Dataset(dataset, train_data_path, T_train)

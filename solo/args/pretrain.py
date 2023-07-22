@@ -21,6 +21,7 @@ _N_CLASSES_PER_DATASET = {
     "imagenet": 1000,
     "imagenet100": 100,
     "imagenette": 10,
+    "tiny-imagenet": 200,
 }
 
 _SUPPORTED_DATASETS = [
@@ -30,6 +31,7 @@ _SUPPORTED_DATASETS = [
     "imagenet",
     "imagenet100",
     "imagenette",
+    "tiny-imagenet",
     "custom",
 ]
 
