@@ -41,6 +41,7 @@ from solo.methods.ta import BYOLWithTA
 from solo.methods.ta_simclr import TA_SimCLR
 from solo.methods.ta_barlow import TA_BarlowTwins
 from solo.methods.mae_regularized import MAE_REG
+from solo.methods.simclr_regularized import SimCLR_REG
 
 
 METHODS = {
@@ -70,6 +71,7 @@ METHODS = {
     "simclr-ta": TA_SimCLR,
     "barlow-ta": TA_BarlowTwins,
     "mae-reg": MAE_REG,
+    "simclr-reg": SimCLR_REG,
 }
 __all__ = [
     "BarlowTwins",
@@ -96,4 +98,5 @@ __all__ = [
     "TA_SimCLR",
     "TA_BarlowTwins",
     "MAE_REG",
+    "SimCLR_REG",
 ]
