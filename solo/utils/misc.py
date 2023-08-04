@@ -245,7 +245,7 @@ def compute_dataset_size(
             [cifar10, cifar100, stl10]. Defaults to None.
         train (Optional[bool]): train dataset flag. Defaults to True.
         data_path (Optional[str]): path to the folder. Defaults to None.
-        data_format (Optional[str]): format of the data, either "image_folder" or "h5".
+        data_format (Optional[str]): format of the data, either "image_folder", "h5", or "ram_image_folder".
             Defaults to "image_folder".
         no_labels (Optional[bool]): if the dataset has no labels. Defaults to False.
         data_fraction (Optional[float]): amount of data to use. Defaults to -1.

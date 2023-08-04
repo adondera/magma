@@ -28,6 +28,7 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 from torchvision.datasets import STL10, ImageFolder
+from solo.data.ram_dataset import RAMImageFolder
 
 try:
     from solo.data.h5_dataset import H5Dataset
@@ -188,7 +189,7 @@ def prepare_datasets(
         val_data_path (Optional[Union[str, Path]], optional): path where the
             validation data is located. Defaults to None.
         data_format (Optional[str]): format of the data. Defaults to "image_folder".
-            Possible values are "image_folder" and "h5".
+            Possible values are "image_folder", "h5" and "ram_image_folder.
         data_fraction (Optional[float]): percentage of data to use. Use all data when set to -1.0.
             Defaults to -1.0.
 
@@ -241,6 +242,9 @@ def prepare_datasets(
             assert _h5_available
             train_dataset = H5Dataset(dataset, train_data_path, T_train)
             val_dataset = H5Dataset(dataset, val_data_path, T_val)
+        elif data_format == "ram_image_folder":
+            train_dataset = RAMImageFolder(train_data_path, T_train)
+            val_dataset = RAMImageFolder(val_data_path, T_val)
         else:
             train_dataset = ImageFolder(train_data_path, T_train)
             val_dataset = ImageFolder(val_data_path, T_val)
@@ -313,7 +317,7 @@ def prepare_data(
         val_data_path (Optional[Union[str, Path]], optional): path where the
             validation data is located. Defaults to None.
         data_format (Optional[str]): format of the data. Defaults to "image_folder".
-            Possible values are "image_folder" and "h5".
+            Possible values are "image_folder", "h5", and "ram_image_folder".
         batch_size (int, optional): batch size. Defaults to 64.
         num_workers (int, optional): number of parallel workers. Defaults to 4.
         data_fraction (Optional[float]): percentage of data to use. Use all data when set to -1.0.

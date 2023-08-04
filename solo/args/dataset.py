@@ -47,7 +47,7 @@ def dataset_args(parser: ArgumentParser):
     parser.add_argument("--train_data_path", type=Path, required=True)
     parser.add_argument("--val_data_path", type=Path, default=None)
     parser.add_argument(
-        "--data_format", default="image_folder", choices=["image_folder", "dali", "h5"]
+        "--data_format", default="image_folder", choices=["image_folder", "dali", "h5", "ram_image_folder"]
     )
 
     # percentage of data used from training, leave -1.0 to use all data available
