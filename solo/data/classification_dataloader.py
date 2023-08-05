@@ -177,6 +177,7 @@ def prepare_datasets(
     data_format: Optional[str] = "image_folder",
     download: bool = True,
     data_fraction: float = -1.0,
+    skip_train_ram = False,
 ) -> Tuple[Dataset, Dataset]:
     """Prepares train and val datasets.
 
@@ -243,7 +244,10 @@ def prepare_datasets(
             train_dataset = H5Dataset(dataset, train_data_path, T_train)
             val_dataset = H5Dataset(dataset, val_data_path, T_val)
         elif data_format == "ram_image_folder":
-            train_dataset = RAMImageFolder(train_data_path, T_train)
+            if not skip_train_ram:
+                train_dataset = RAMImageFolder(train_data_path, T_train)
+            else:
+                train_dataset = ImageFolder(train_data_path, T_train)
             val_dataset = RAMImageFolder(val_data_path, T_val)
         else:
             train_dataset = ImageFolder(train_data_path, T_train)
@@ -307,6 +311,7 @@ def prepare_data(
     download: bool = True,
     data_fraction: float = -1.0,
     auto_augment: bool = False,
+    skip_train_ram: bool = False,
 ) -> Tuple[DataLoader, DataLoader]:
     """Prepares transformations, creates dataset objects and wraps them in dataloaders.
 
@@ -353,6 +358,7 @@ def prepare_data(
         data_format=data_format,
         download=download,
         data_fraction=data_fraction,
+        skip_train_ram = skip_train_ram,
     )
     train_loader, val_loader = prepare_dataloaders(
         train_dataset,
