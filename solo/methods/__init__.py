@@ -42,6 +42,7 @@ from solo.methods.ta_simclr import TA_SimCLR
 from solo.methods.ta_barlow import TA_BarlowTwins
 from solo.methods.mae_regularized import MAE_REG
 from solo.methods.simclr_regularized import SimCLR_REG
+from solo.methods.vicreg_regularized import VICReg_REG
 
 
 METHODS = {
@@ -72,6 +73,7 @@ METHODS = {
     "barlow-ta": TA_BarlowTwins,
     "mae-reg": MAE_REG,
     "simclr-reg": SimCLR_REG,
+    "vicreg-reg": VICReg_REG,
 }
 __all__ = [
     "BarlowTwins",
@@ -99,4 +101,5 @@ __all__ = [
     "TA_BarlowTwins",
     "MAE_REG",
     "SimCLR_REG",
+    "VICReg_REG",
 ]
