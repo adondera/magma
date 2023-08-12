@@ -201,6 +201,6 @@ class VICReg_REG(BaseMethod):
                 "train_regularization_loss_scaled": regularization_loss_scaled,
             }
         )
-        metrics.update({"train_vicreg_loss", vicreg_loss})
+        metrics.update({"train_vicreg_loss": vicreg_loss})
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
         return vicreg_loss + class_loss + regularization_loss_scaled
