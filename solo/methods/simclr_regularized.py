@@ -136,7 +136,7 @@ class SimCLR_REG(BaseMethod):
 
         out = {}
         def hook_fn_3(module, input, output):
-            out['layer_3'] = output
+            out['layer3'] = nn.functional.adaptive_avg_pool2d(output, (1,1)).flatten(1)
         handle_3 = self.backbone.layer3.register_forward_hook(hook_fn_3)
         out.update(super().forward(X))
 
@@ -195,8 +195,9 @@ class SimCLR_REG(BaseMethod):
             temperature=self.temperature,
         )
 
+        # # ------- manifold regularization -------
         regularizer_loss, metrics = self.manifold_regularizer.manifold_regularizer_loss(
-            nn.functional.adaptive_avg_pool2d(torch.cat(out['layer_3']), (1, 1)).flatten(1),
+            torch.cat(out['layer3']),
             torch.cat(out['feats'])
         )
 

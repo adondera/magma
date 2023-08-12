@@ -152,18 +152,14 @@ class VICReg_REG(BaseMethod):
         """
 
         out = {}
-        handles = []
-        for layer in ["layer3", "layer4"]:
-            layer_module = getattr(self.backbone, layer)
-            def hook_fn(module, input, output, layer=layer):
-                out[layer] = output
-            handles.append(layer_module.register_forward_hook(hook_fn))
+        def hook_fn(module, input, output):
+            out["layer3"] = nn.functional.adaptive_avg_pool2d(output, (1,1)).flatten(1)
+        handle = self.backbone.layer3.register_forward_hook(hook_fn)
 
         out.update(super().forward(X))
         z = self.projector(out["feats"])
         out.update({"z": z})
-        for handle in handles:
-            handle.remove()
+        handle.remove()
         return out
 
     def training_step(self, batch: Sequence[Any], batch_idx: int) -> torch.Tensor:
@@ -192,8 +188,8 @@ class VICReg_REG(BaseMethod):
         )
         metrics = {}
         regularizer_loss, metrics = self.manifold_regularizer.manifold_regularizer_loss(
-            nn.functional.adaptive_avg_pool2d(torch.cat(out['layer3']), (1, 1)).flatten(1),
-            nn.functional.adaptive_avg_pool2d(torch.cat(out['layer4']), (1, 1)).flatten(1),
+            torch.cat(out['layer3']),
+            torch.cat(out['feats']),
         )
 
         metrics.update({"train_regularization_loss": regularizer_loss})
