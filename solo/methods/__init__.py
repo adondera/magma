@@ -43,6 +43,7 @@ from solo.methods.ta_barlow import TA_BarlowTwins
 from solo.methods.mae_regularized import MAE_REG
 from solo.methods.simclr_regularized import SimCLR_REG
 from solo.methods.vicreg_regularized import VICReg_REG
+from solo.methods.dino_regularized import DINO_REG
 
 
 METHODS = {
@@ -74,6 +75,7 @@ METHODS = {
     "mae-reg": MAE_REG,
     "simclr-reg": SimCLR_REG,
     "vicreg-reg": VICReg_REG,
+    "dino-reg": DINO_REG,
 }
 __all__ = [
     "BarlowTwins",
@@ -102,4 +104,5 @@ __all__ = [
     "MAE_REG",
     "SimCLR_REG",
     "VICReg_REG",
+    "DINO_REG",
 ]
