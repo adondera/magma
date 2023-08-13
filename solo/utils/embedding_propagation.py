@@ -3,6 +3,23 @@ import torch.nn.functional as F
 import numpy as np
 
 
+def get_cosine_similarity_matrix(x):
+    """
+    Given input X of shape (b, c, h, w) computes a similarity matrix based on cosine similarity.
+    For two inputs x1 and x2, we compute like this:
+    compute the similarity between each channel in x1 and x2
+    average the corresponding similarities.
+
+    We do this for all pairwise samples in X.
+    """
+    b, c, _, _ = x.size()
+    x = x.view(b, c, -1)
+    x = F.normalize(x, dim=2)
+    similarity_matrix = (x.view(b, 1, c, -1) * x.view(1, b, c, -1)).sum(dim=-1).mean(dim=-1)
+    mask = torch.eye(similarity_matrix.size(1), dtype=torch.bool, device=similarity_matrix.device)
+    return (1 + similarity_matrix) * (~mask).float()
+
+
 def get_similarity_matrix(x, rbf_scale, scaling_factor=True):
     b, c = x.size()
     sq_dist = ((x.view(b, 1, c) - x.view(1, b, c)) ** 2).sum(-1)
