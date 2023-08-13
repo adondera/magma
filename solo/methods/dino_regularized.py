@@ -154,7 +154,7 @@ class DINO_REG(BaseMomentumMethod):
         # Scheduler params
         self.configure_reg_scheduler(cfg.method_kwargs.reg_scheduler)
 
-        self.manifold_regularizer = ManifoldRegularizer(return_metrics=True)
+        self.manifold_regularizer = ManifoldRegularizer(return_metrics=False)
 
         # dino head
         self.head = DINOHead(
