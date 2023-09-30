@@ -530,8 +530,8 @@ class BaseMethod(pl.LightningModule):
             mask = targets != -1
             if self.knn_eval:
                 self.knn.update(
-                    train_features=torch.cat(outs["feats"][: self.num_large_crops])[mask].detach(),
-                    train_targets=targets[mask],
+                    train_features=torch.cat(outs["feats"][: self.num_large_crops])[mask].detach().cpu(),
+                    train_targets=targets[mask].cpu(),
                 )
 
         return outs
