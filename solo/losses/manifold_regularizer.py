@@ -3,15 +3,17 @@ import torch
 from solo.utils.embedding_propagation import get_similarity_matrix, get_laplacian
 
 class ManifoldRegularizer():
-    def __init__(self, return_metrics: bool = False):
+    def __init__(self, scale_euclidean_distance: bool = False, return_metrics: bool = False):
+        self.scale_euclidean_distance = scale_euclidean_distance
         self.return_metrics = return_metrics
         self.last_laplacian_matrix = None
         self.last_similarity_matrix = None
 
-    def manifold_regularizer_loss(self, x: torch.Tensor, y: torch.Tensor):
-        weights_matrix = get_similarity_matrix(x, rbf_scale=1.0, scaling_factor=False)
+    def manifold_regularizer_loss(self, x: torch.Tensor, y: torch.Tensor, rbf_scale=1.0):
+        weights_matrix, gamma = get_similarity_matrix(x, rbf_scale=rbf_scale, scaling_factor=self.scale_euclidean_distance)
         laplacian = get_laplacian(weights_matrix, normalized=True)
         metrics = {}
+        metrics['gamma'] = gamma
         if self.return_metrics:
             with torch.no_grad():
                 sorted_eigvals = torch.linalg.eigvals(laplacian).real.cpu().numpy()

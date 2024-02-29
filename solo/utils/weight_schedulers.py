@@ -1,3 +1,6 @@
+from typing import Any
+
+
 class TriangleScheduler():
     def __init__(self, start_weight, max_weight, end_weight, start_epoch, mid_epoch, end_epoch):
         self.start_weight = start_weight
@@ -34,7 +37,35 @@ class WarmupScheduler():
             return self.weight
         else:
             return self.base_weight
-        
+
+class StepScheduler():
+    def __init__(self, weight, steps: list[int], scale = 0.1, warmup_epochs=5):
+        self.weight = weight
+        self.steps = steps
+        self.scale = scale
+        self.warmup_epochs = warmup_epochs
+
+    def __call__(self, epoch):
+        if epoch < self.warmup_epochs:
+            return 0
+        while self.steps and epoch >= self.steps[0]:
+            self.weight *= self.scale
+            self.steps.pop(0)
+        return self.weight
+
+class IntervalScheduler():
+    def __init__(self, intervals: list[list[int]], max_epochs) -> None:
+        self.max_epochs = max_epochs
+        self.weight_per_epoch = [0 for _ in range(max_epochs)]
+        for (x, y, weight) in intervals:
+            for i in range(x, y):
+                self.weight_per_epoch[i] = weight
+
+    def __call__(self, epoch) -> float:
+        if epoch > self.max_epochs:
+            return 0
+        return self.weight_per_epoch[epoch]
+
 class ConstantScheduler():
     def __init__(self, weight):
         self.weight = weight

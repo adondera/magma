@@ -26,7 +26,7 @@ from solo.losses.manifold_regularizer import ManifoldRegularizer
 from solo.losses.vicreg import vicreg_loss_func
 from solo.methods.base import BaseMethod
 from solo.utils.misc import omegaconf_select
-from solo.utils.weight_schedulers import TriangleScheduler, WarmupScheduler, ConstantScheduler
+from solo.utils.weight_schedulers import IntervalScheduler, StepScheduler, TriangleScheduler, WarmupScheduler, ConstantScheduler
 
 
 
@@ -56,6 +56,11 @@ class VICReg_REG(BaseMethod):
         self.configure_reg_scheduler(cfg.method_kwargs.reg_scheduler)
 
         self.manifold_regularizer = ManifoldRegularizer(return_metrics=False)
+
+        try:
+            self.layers = cfg.method_kwargs.layers
+        except:
+            pass
 
         # projector
         self.projector = nn.Sequential(
@@ -125,11 +130,21 @@ class VICReg_REG(BaseMethod):
                 weight=scheduler.weight,
                 reg_epochs=scheduler.reg_epochs,
             )
+        elif scheduler.name == "step":
+            self.reg_scheduler = StepScheduler(
+                weight=scheduler.weight,
+                steps=scheduler.steps,
+                scale=scheduler.scale,
+            )
+        elif scheduler.name == "interval":
+            self.reg_scheduler = IntervalScheduler(
+                intervals=scheduler.intervals,
+                max_epochs = self.max_epochs,
+            ) 
         else:
             self.reg_scheduler = ConstantScheduler(
                 weight=scheduler.weight,
             )
-
     @property
     def learnable_params(self) -> List[dict]:
         """Adds projector parameters to the parent's learnable parameters.
@@ -152,14 +167,28 @@ class VICReg_REG(BaseMethod):
         """
 
         out = {}
-        def hook_fn(module, input, output):
-            out["layer3"] = nn.functional.adaptive_avg_pool2d(output, (1,1)).flatten(1)
-        handle = self.backbone.layer3.register_forward_hook(hook_fn)
+        handles = []
+        if self.training:
+            if self.cfg.backbone.name.startswith("resnet"):
+                def hook_fn_3(module, input, output):
+                    out['layer3'] = nn.functional.adaptive_avg_pool2d(output, (1,1)).flatten(1)
+                handle_3 = self.backbone.layer3.register_forward_hook(hook_fn_3)
+                handles.append(handle_3)
+            else:
+                for number, block in enumerate(self.backbone.blocks):
+                    def hook_fn(module, input, output, number=number):
+                        mean_token_representation = output[:, 1:, :].mean(dim=1)
+                        out.update({f"mean_block_{number}": mean_token_representation})
+                        out.update({f"cls_block_{number}": output[:, 0, :]})
+
+                    handle = block.register_forward_hook(hook_fn)
+                    handles.append(handle)
 
         out.update(super().forward(X))
         z = self.projector(out["feats"])
         out.update({"z": z})
-        handle.remove()
+        for handle in handles:
+            handle.remove()
         return out
 
     def training_step(self, batch: Sequence[Any], batch_idx: int) -> torch.Tensor:
@@ -179,7 +208,7 @@ class VICReg_REG(BaseMethod):
         z1, z2 = out["z"]
 
         # ------- vicreg loss -------
-        vicreg_loss = vicreg_loss_func(
+        vicreg_loss, loss_dict = vicreg_loss_func(
             z1,
             z2,
             sim_loss_weight=self.sim_loss_weight,
@@ -187,10 +216,29 @@ class VICReg_REG(BaseMethod):
             cov_loss_weight=self.cov_loss_weight,
         )
         metrics = {}
-        regularizer_loss, metrics = self.manifold_regularizer.manifold_regularizer_loss(
-            torch.cat(out['layer3']),
-            torch.cat(out['feats']),
-        )
+        if self.cfg.backbone.name.startswith("resnet"):
+            regularizer_loss, metrics = self.manifold_regularizer.manifold_regularizer_loss(
+                torch.cat(out['layer3']),
+                torch.cat(out['feats']),
+            )
+        else:
+            regularizer_loss=0
+            last_block_number = len(self.backbone.blocks) - 1
+            if last_block_number in self.layers:
+                self.layers.remove(last_block_number)
+            for layer in self.layers:
+                if layer != last_block_number:
+                    loss_term, laplacian_metrics = self.manifold_regularizer.manifold_regularizer_loss(
+                        out[f"mean_block_{layer}"][0],
+                        out[f"mean_block_{last_block_number}"][0],
+                    )
+                    for key, value in laplacian_metrics.items():
+                        metrics[f"{key}_Layer{layer}"] = value
+                    regularizer_loss += loss_term
+            # Divide loss by the number of terms in the regularization loss
+            if len(self.layers) > 0:
+                regularizer_loss /= len(self.layers)
+        metrics.update(loss_dict)
 
         metrics.update({"train_regularization_loss": regularizer_loss})
         regularizer_weight = self.reg_scheduler(self.current_epoch)

@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Sequence
 
 import omegaconf
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 from matplotlib import colors
 from solo.losses.mae import mae_loss_func
@@ -31,7 +32,35 @@ from solo.utils.misc import generate_2d_sincos_pos_embed, omegaconf_select
 from solo.utils.weight_schedulers import TriangleScheduler, WarmupScheduler, StepScheduler, ConstantScheduler, IntervalScheduler
 from solo.utils.metrics import weighted_mean, tensor_mean, get_heatmap
 from timm.models.vision_transformer import Block
-from solo.methods.u_mae import uniformity_loss
+
+def uniformity_loss(features):
+    # # gather across devices
+    # features = torch.cat(GatherLayer.apply(features), dim=0)
+    # calculate loss
+    features = torch.nn.functional.normalize(features)
+    sim = features @ features.T 
+    loss = sim.pow(2).mean()
+    return loss
+
+
+# class GatherLayer(torch.autograd.Function):
+#     """Gather tensors from all process, supporting backward propagation."""
+
+#     @staticmethod
+#     def forward(ctx, input):
+#         ctx.save_for_backward(input)
+#         output = [torch.zeros_like(input) for _ in range(dist.get_world_size())]
+#         dist.all_gather(output, input.contiguous())
+#         return tuple(output)
+
+#     @staticmethod
+#     def backward(ctx, *grads):
+#         (input,) = ctx.saved_tensors
+#         grad_out = torch.zeros_like(input)
+#         grad_out[:] = grads[dist.get_rank()]
+#         return grad_out
+
+
 
 class MAEDecoder(nn.Module):
     def __init__(
@@ -136,7 +165,7 @@ class MAEDecoder(nn.Module):
         return x
 
 
-class MAE_REG(BaseMethod):
+class U_MAE(BaseMethod):
     def __init__(
         self,
         cfg: omegaconf.DictConfig,
@@ -178,11 +207,8 @@ class MAE_REG(BaseMethod):
         decoder_num_heads: int = cfg.method_kwargs.decoder_num_heads
 
         self.scale_euclidean_distance = cfg.method_kwargs.scale_euclidean_distance
-        self.rbf_scale = cfg.method_kwargs.rbf_scale
 
         self.manifold_regularizer = ManifoldRegularizer(scale_euclidean_distance=self.scale_euclidean_distance, return_metrics=False)
-
-        self.uniformity_weight = cfg.method_kwargs.uniformity_weight
 
         self.log_images = cfg.method_kwargs.log_images
 
@@ -217,7 +243,7 @@ class MAE_REG(BaseMethod):
             omegaconf.DictConfig: same as the argument, used to avoid errors.
         """
 
-        cfg = super(MAE_REG, MAE_REG).add_and_assert_specific_cfg(cfg)
+        cfg = super(U_MAE, U_MAE).add_and_assert_specific_cfg(cfg)
 
         assert not omegaconf.OmegaConf.is_missing(
             cfg, "method_kwargs.decoder_embed_dim"
@@ -242,8 +268,6 @@ class MAE_REG(BaseMethod):
         cfg.method_kwargs.log_images = omegaconf_select(cfg, "method_kwargs.log_images", False)
         cfg.method_kwargs.reset_classifier = omegaconf_select(cfg, "method_kwargs.reset_classifier", False)
         cfg.method_kwargs.scale_euclidean_distance = omegaconf_select(cfg, "method_kwargs.scale_euclidean_distance", False)
-        cfg.method_kwargs.uniformity_weight = omegaconf_select(cfg, "method_kwargs.uniformity_weight", 0)
-        cfg.method_kwargs.rbf_scale = omegaconf_select(cfg, "method_kwargs.rbf_scale", 1)
 
         return cfg
     
@@ -353,7 +377,6 @@ class MAE_REG(BaseMethod):
         patch_size = self._vit_patch_size
         imgs = batch[1]
         reconstruction_loss = 0
-        regularizer_loss = 0
         for i in range(self.num_large_crops):
             reconstruction_loss += mae_loss_func(
                 imgs[i],
@@ -364,32 +387,11 @@ class MAE_REG(BaseMethod):
             )
         reconstruction_loss /= self.num_large_crops
 
-        last_block_number = len(self.backbone.blocks) - 1
-        if last_block_number in self.layers:
-            self.layers.remove(last_block_number)
-
-        for layer in self.layers:
-            if layer != last_block_number:
-                loss_term, laplacian_metrics = self.manifold_regularizer.manifold_regularizer_loss(
-                    out[f"mean_block_{layer}"][0],
-                    out[f"mean_block_{last_block_number}"][0],
-                    rbf_scale=self.rbf_scale,
-                )
-                metrics.update({f"Layer{layer}_to_Layer{last_block_number}_regularization_loss": loss_term})
-                for key, value in laplacian_metrics.items():
-                    metrics[f"{key}_Layer{layer}"] = value
-                regularizer_loss += loss_term
-
-        # Divide loss by the number of terms in the regularization loss
-        if len(self.layers) > 0:
-            regularizer_loss /= len(self.layers)
-
-        reg_uniformity_loss = uniformity_loss(out['feats'][0])
+        regularizer_loss = uniformity_loss(out['feats'][0])
 
         metrics.update({
             "train_reconstruction_loss": reconstruction_loss,
             "train_regularization_loss": regularizer_loss,
-            "uniformity_loss": reg_uniformity_loss,
         })
 
         # for number, _ in enumerate(self.backbone.blocks):
@@ -400,21 +402,18 @@ class MAE_REG(BaseMethod):
         #             .mean()
         #         }
         #     )
-        
 
         regularizer_weight = self.reg_scheduler(self.current_epoch)
         regularization_loss_scaled = regularizer_loss * regularizer_weight
-        uniformity_loss_scaled = reg_uniformity_loss * self.uniformity_weight
         metrics.update(
             {
                 "train_regularizer_weight": regularizer_weight,
                 "train_regularization_loss_scaled": regularization_loss_scaled,
-                "uniformity_loss_scaled": uniformity_loss_scaled,
             }
         )
 
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
-        return reconstruction_loss + class_loss + regularization_loss_scaled + uniformity_loss_scaled
+        return reconstruction_loss + class_loss + regularization_loss_scaled
 
     def on_after_backward(self) -> None:
         # Log the average abs gradient of each parameter in the backbone
@@ -477,7 +476,7 @@ class MAE_REG(BaseMethod):
         if self.log_images:
             for layer in self.layers:
                 similarity_matrix, gamma = get_similarity_matrix(
-                    out[f"mean_block_{layer}"], rbf_scale=self.rbf_scale, scaling_factor=False
+                    out[f"mean_block_{layer}"], rbf_scale=1.0, scaling_factor=False
                 )
                 laplacian_matrix = get_laplacian(similarity_matrix, normalized=True)
                 similarity_matrices[f"SimilarityMatrix_Layer{layer}"] = similarity_matrix
@@ -574,7 +573,7 @@ class MAE_REG(BaseMethod):
                 if self.validation_class_counts[class_idx]:
                     self.validation_mean_embeddings[class_idx] /= self.validation_class_counts[class_idx]
             tensors = torch.stack([v for (_, v) in sorted(self.validation_mean_embeddings.items(), key=lambda item: item[0])])
-            similarity_matrix = get_similarity_matrix(tensors, rbf_scale=self.rbf_scale, scaling_factor=False)
+            similarity_matrix = get_similarity_matrix(tensors, rbf_scale=1.0, scaling_factor=False)
             laplacian_matrix = get_laplacian(similarity_matrix, normalized=True)
             title = f"Similarity matrix of mean embeddings per class. Epoch {self.current_epoch}"
             log.update({"MaxValueSimilarityMatrix": similarity_matrix.max()})
