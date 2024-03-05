@@ -21,6 +21,7 @@ import inspect
 import os
 
 import hydra
+from solo.methods.base import BaseMethod
 import torch
 import wandb
 from omegaconf import DictConfig, OmegaConf
@@ -71,91 +72,13 @@ def main(cfg: DictConfig):
     assert cfg.method in METHODS, f"Choose from {METHODS.keys()}"
 
     if cfg.data.num_large_crops != 2:
-        assert cfg.method in ["wmse", "mae", "mae-reg"]
+        assert cfg.method in ["wmse", "mae", "mae-reg", "u-mae"]
 
     model = METHODS[cfg.method](cfg)
     make_contiguous(model)
     # can provide up to ~20% speed up
     if not cfg.performance.disable_channel_last:
         model = model.to(memory_format=torch.channels_last)
-
-    # validation dataloader for when it is available
-    if cfg.data.dataset == "custom" and (cfg.data.no_labels or cfg.data.val_path is None):
-        val_loader = None
-    elif cfg.data.dataset in ["imagenet100", "imagenet"] and cfg.data.val_path is None:
-        val_loader = None
-    else:
-        if cfg.data.format == "dali":
-            val_data_format = "image_folder"
-        else:
-            val_data_format = cfg.data.format
-
-        _, val_loader = prepare_data_classification(
-            cfg.data.dataset,
-            train_data_path=cfg.data.train_path,
-            val_data_path=cfg.data.val_path,
-            data_format=val_data_format,
-            batch_size=cfg.optimizer.batch_size,
-            num_workers=cfg.data.num_workers,
-            skip_train_ram = True,
-        )
-
-    # pretrain dataloader
-    if cfg.data.format == "dali":
-        assert (
-            _dali_avaliable
-        ), "Dali is not currently avaiable, please install it first with pip3 install .[dali]."
-        pipelines = []
-        for aug_cfg in cfg.augmentations:
-            pipelines.append(
-                NCropAugmentation(
-                    build_transform_pipeline_dali(
-                        cfg.data.dataset, aug_cfg, dali_device=cfg.dali.device
-                    ),
-                    aug_cfg.num_crops,
-                )
-            )
-        transform = FullTransformPipeline(pipelines)
-
-        dali_datamodule = PretrainDALIDataModule(
-            dataset=cfg.data.dataset,
-            train_data_path=cfg.data.train_path,
-            transforms=transform,
-            num_large_crops=cfg.data.num_large_crops,
-            num_small_crops=cfg.data.num_small_crops,
-            num_workers=cfg.data.num_workers,
-            batch_size=cfg.optimizer.batch_size,
-            no_labels=cfg.data.no_labels,
-            data_fraction=cfg.data.fraction,
-            dali_device=cfg.dali.device,
-            encode_indexes_into_labels=cfg.dali.encode_indexes_into_labels,
-        )
-        dali_datamodule.val_dataloader = lambda: val_loader
-    else:
-        pipelines = []
-        for aug_cfg in cfg.augmentations:
-            pipelines.append(
-                NCropAugmentation(
-                    build_transform_pipeline(cfg.data.dataset, aug_cfg), aug_cfg.num_crops
-                )
-            )
-        transform = FullTransformPipeline(pipelines)
-
-        if cfg.debug_augmentations:
-            print("Transforms:")
-            print(transform)
-
-        train_dataset = prepare_datasets(
-            cfg.data.dataset,
-            transform,
-            train_data_path=cfg.data.train_path,
-            data_format=cfg.data.format,
-            no_labels=cfg.data.no_labels,
-            data_fraction=cfg.data.fraction,
-        )
-        train_loader = prepare_dataloader(
-            train_dataset, batch_size=cfg.optimizer.batch_size, num_workers=cfg.data.num_workers
-        )
 
     # 1.7 will deprecate resume_from_checkpoint, but for the moment
     # the argument is the same, but we need to pass it as ckpt_path to trainer.fit
@@ -176,6 +99,40 @@ def main(cfg: DictConfig):
         ckpt_path = cfg.resume_from_checkpoint
         del cfg.resume_from_checkpoint
 
+    try:
+        if "pretrained_feature_extractor" in cfg and cfg.pretrained_feature_extractor:
+            print("Starting from a pretrained checkpoint. WARNING: Recommended to use resume_from_checkpoint. This just loads the weights without the optimizer states.")
+            backbone_model = BaseMethod._BACKBONES[cfg.backbone.name]
+
+            # initialize backbone
+            backbone = backbone_model(method=cfg.method, **cfg.backbone.kwargs)
+
+            ckpt_path = cfg.pretrained_feature_extractor
+            assert ckpt_path.endswith(".ckpt") or ckpt_path.endswith(".pth") or ckpt_path.endswith(".pt")
+
+            loaded_ckpt = torch.load(ckpt_path, map_location="cpu")
+            if 'state_dict' in loaded_ckpt:
+                state = loaded_ckpt['state_dict']
+            elif 'model' in loaded_ckpt:
+                state = loaded_ckpt['model']
+            else:
+                raise ValueError("Unsupported checkpoint")
+            for k in list(state.keys()):
+                can_delete = False
+                if "encoder" in k:
+                    state[k.replace("encoder", "backbone")] = state[k]
+                    can_delete = True
+                if "backbone" in k:
+                    state[k.replace("backbone.", "")] = state[k]
+                    can_delete = True
+                if can_delete:
+                    del state[k]
+            backbone.load_state_dict(state, strict=False)
+            print(f"Loaded {ckpt_path}")
+            ckpt_path = None
+            model.backbone = backbone
+    except:
+        raise ValueError(f"Could not load weights for {cfg.pretrained_feature_extractor}")
     callbacks = []
 
     if cfg.checkpoint.enabled:
@@ -208,14 +165,99 @@ def main(cfg: DictConfig):
             offline=cfg.wandb.offline,
             resume="allow" if wandb_run_id else None,
             id=wandb_run_id,
+            save_dir="/tudelft.net/staff-umbrella/StudentsCVlab/adondera/wandb"
         )
-        wandb_logger.watch(model, log="gradients", log_freq=100)
+        # wandb_logger.watch(model, log="gradients", log_freq=100)
         wandb_logger.log_hyperparams(OmegaConf.to_container(cfg))
 
         # lr logging
         lr_monitor = LearningRateMonitor(logging_interval="step")
         callbacks.append(lr_monitor)
+    
+    print("Wandb logger done setup")
 
+    # validation dataloader for when it is available
+    if cfg.data.dataset == "custom" and (cfg.data.no_labels or cfg.data.val_path is None):
+        val_loader = None
+    elif cfg.data.dataset in ["imagenet100", "imagenet"] and cfg.data.val_path is None:
+        val_loader = None
+    else:
+        if cfg.data.format == "dali":
+            val_data_format = "image_folder"
+        else:
+            val_data_format = cfg.data.format
+        print("Preparing validation loader")
+        _, val_loader = prepare_data_classification(
+            cfg.data.dataset,
+            train_data_path=cfg.data.train_path,
+            val_data_path=cfg.data.val_path,
+            data_format=val_data_format,
+            batch_size=cfg.optimizer.batch_size,
+            num_workers=cfg.data.num_workers,
+            skip_train_ram = True,
+        )
+
+    # pretrain dataloader
+    if cfg.data.format == "dali":
+        assert (
+            _dali_avaliable
+        ), "Dali is not currently avaiable, please install it first with pip3 install .[dali]."
+        pipelines = []
+        for aug_cfg in cfg.augmentations:
+            pipelines.append(
+                NCropAugmentation(
+                    build_transform_pipeline_dali(
+                        cfg.data.dataset, aug_cfg, dali_device=cfg.dali.device
+                    ),
+                    aug_cfg.num_crops,
+                )
+            )
+        transform = FullTransformPipeline(pipelines)
+
+        print("Preparing DALI Data Module")
+        print(cfg.data.tfrecord)
+        dali_datamodule = PretrainDALIDataModule(
+            dataset=cfg.data.dataset,
+            train_data_path=cfg.data.train_path,
+            transforms=transform,
+            num_large_crops=cfg.data.num_large_crops,
+            num_small_crops=cfg.data.num_small_crops,
+            num_workers=cfg.data.num_workers,
+            batch_size=cfg.optimizer.batch_size,
+            no_labels=cfg.data.no_labels,
+            data_fraction=cfg.data.fraction,
+            dali_device=cfg.dali.device,
+            encode_indexes_into_labels=cfg.dali.encode_indexes_into_labels,
+            use_tfrecords = cfg.data.tfrecord
+        )
+        dali_datamodule.val_dataloader = lambda: val_loader
+    else:
+        pipelines = []
+        for aug_cfg in cfg.augmentations:
+            pipelines.append(
+                NCropAugmentation(
+                    build_transform_pipeline(cfg.data.dataset, aug_cfg), aug_cfg.num_crops
+                )
+            )
+        transform = FullTransformPipeline(pipelines)
+
+        if cfg.debug_augmentations:
+            print("Transforms:")
+            print(transform)
+
+        train_dataset = prepare_datasets(
+            cfg.data.dataset,
+            transform,
+            train_data_path=cfg.data.train_path,
+            data_format=cfg.data.format,
+            no_labels=cfg.data.no_labels,
+            data_fraction=cfg.data.fraction,
+        )
+        train_loader = prepare_dataloader(
+            train_dataset, batch_size=cfg.optimizer.batch_size, num_workers=cfg.data.num_workers
+        )
+
+    print("Loaded DALI module")
     trainer_kwargs = OmegaConf.to_container(cfg)
     # we only want to pass in valid Trainer args, the rest may be user specific
     valid_kwargs = inspect.signature(Trainer.__init__).parameters
@@ -230,8 +272,10 @@ def main(cfg: DictConfig):
             else cfg.strategy,
         }
     )
+    # trainer_kwargs['val_check_interval']=1
+    print("Creating trainer object")
     trainer = Trainer(**trainer_kwargs)
-
+    print("Finished creating Trainer object")
     # fix for incompatibility with nvidia-dali and pytorch lightning
     # with dali 1.15 (this will be fixed on 1.16)
     # https://github.com/Lightning-AI/lightning/issues/12956
@@ -249,7 +293,10 @@ def main(cfg: DictConfig):
     except:
         pass
 
-    wandb.run.log_code('.')
+
+    # wandb.run.log_code('.')
+    print("Starting training")
+    print(f"Checkpoint path is: {ckpt_path}")
     if cfg.data.format == "dali":
         trainer.fit(model, ckpt_path=ckpt_path, datamodule=dali_datamodule)
     else:

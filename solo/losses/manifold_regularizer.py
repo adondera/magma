@@ -9,8 +9,8 @@ class ManifoldRegularizer():
         self.last_laplacian_matrix = None
         self.last_similarity_matrix = None
 
-    def manifold_regularizer_loss(self, x: torch.Tensor, y: torch.Tensor, rbf_scale=1.0):
-        weights_matrix, gamma = get_similarity_matrix(x, rbf_scale=rbf_scale, scaling_factor=self.scale_euclidean_distance)
+    def manifold_regularizer_loss(self, x: torch.Tensor, y: torch.Tensor, rbf_scale=1.0, fixed_gamma=None):
+        weights_matrix, gamma = get_similarity_matrix(x, rbf_scale=rbf_scale, scaling_factor=self.scale_euclidean_distance, fixed_gamma=fixed_gamma)
         laplacian = get_laplacian(weights_matrix, normalized=True)
         metrics = {}
         metrics['gamma'] = gamma

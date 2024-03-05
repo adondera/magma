@@ -47,14 +47,17 @@ def get_cosine_similarity_matrix(x):
     return (1 + similarity_matrix) * (~mask).float()
 
 
-def get_similarity_matrix(x, rbf_scale, scaling_factor=True):
+def get_similarity_matrix(x, rbf_scale, scaling_factor=True, fixed_gamma=None):
     b, c = x.size()
     sq_dist = ((x.view(b, 1, c) - x.view(1, b, c)) ** 2).sum(-1)
     if scaling_factor:
         sq_dist  = sq_dist / np.sqrt(c)
     mask = sq_dist != 0
     gamma = sq_dist[mask].std()
-    sq_dist = sq_dist / gamma
+    if fixed_gamma:
+        sq_dist = sq_dist / fixed_gamma
+    else:
+        sq_dist = sq_dist / gamma
     weights = torch.exp(-sq_dist * rbf_scale)
     mask = torch.eye(weights.size(1), dtype=torch.bool, device=weights.device)
     weights = weights * (~mask).float()

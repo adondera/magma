@@ -179,6 +179,7 @@ class MAE_REG(BaseMethod):
 
         self.scale_euclidean_distance = cfg.method_kwargs.scale_euclidean_distance
         self.rbf_scale = cfg.method_kwargs.rbf_scale
+        self.fixed_gamma = cfg.method_kwargs.fixed_gamma
 
         self.manifold_regularizer = ManifoldRegularizer(scale_euclidean_distance=self.scale_euclidean_distance, return_metrics=False)
 
@@ -244,6 +245,7 @@ class MAE_REG(BaseMethod):
         cfg.method_kwargs.scale_euclidean_distance = omegaconf_select(cfg, "method_kwargs.scale_euclidean_distance", False)
         cfg.method_kwargs.uniformity_weight = omegaconf_select(cfg, "method_kwargs.uniformity_weight", 0)
         cfg.method_kwargs.rbf_scale = omegaconf_select(cfg, "method_kwargs.rbf_scale", 1)
+        cfg.method_kwargs.fixed_gamma = omegaconf_select(cfg, "method_kwargs.fixed_gamma", None)
 
         return cfg
     
@@ -374,6 +376,7 @@ class MAE_REG(BaseMethod):
                     out[f"mean_block_{layer}"][0],
                     out[f"mean_block_{last_block_number}"][0],
                     rbf_scale=self.rbf_scale,
+                    fixed_gamma=self.fixed_gamma,
                 )
                 metrics.update({f"Layer{layer}_to_Layer{last_block_number}_regularization_loss": loss_term})
                 for key, value in laplacian_metrics.items():
@@ -416,42 +419,42 @@ class MAE_REG(BaseMethod):
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
         return reconstruction_loss + class_loss + regularization_loss_scaled + uniformity_loss_scaled
 
-    def on_after_backward(self) -> None:
-        # Log the average abs gradient of each parameter in the backbone
-        for name, param in self.backbone.named_parameters():
-            if param.grad is not None:
-                self.log_dict(
-                    {
-                        f"grad_abs_{name}": param.grad.abs().mean(),
-                        f"grad_std_{name}": param.grad.std(),
-                    },
-                    on_epoch=True,
-                    on_step=False,
-                    sync_dist=True,
-                )
-        # Log the mean and std of the gradients per block in backbone separately too
-        for number, _ in enumerate(self.backbone.blocks):
-            self.log_dict(
-                {
-                    f"grad_abs_block_{number}": torch.stack(
-                        [
-                            param.grad.abs().mean()
-                            for name, param in self.backbone.named_parameters()
-                            if f"blocks.{number}" in name
-                        ]
-                    ).mean(),
-                    f"grad_std_block_{number}": torch.stack(
-                        [
-                            param.grad.std()
-                            for name, param in self.backbone.named_parameters()
-                            if f"blocks.{number}" in name
-                        ]
-                    ).mean(),
-                },
-                on_epoch=True,
-                on_step=False,
-                sync_dist=True,
-            )
+    # def on_after_backward(self) -> None:
+    #     # Log the average abs gradient of each parameter in the backbone
+    #     for name, param in self.backbone.named_parameters():
+    #         if param.grad is not None:
+    #             self.log_dict(
+    #                 {
+    #                     f"grad_abs_{name}": param.grad.abs().mean(),
+    #                     f"grad_std_{name}": param.grad.std(),
+    #                 },
+    #                 on_epoch=True,
+    #                 on_step=False,
+    #                 sync_dist=True,
+    #             )
+    #     # Log the mean and std of the gradients per block in backbone separately too
+    #     for number, _ in enumerate(self.backbone.blocks):
+    #         self.log_dict(
+    #             {
+    #                 f"grad_abs_block_{number}": torch.stack(
+    #                     [
+    #                         param.grad.abs().mean()
+    #                         for name, param in self.backbone.named_parameters()
+    #                         if f"blocks.{number}" in name
+    #                     ]
+    #                 ).mean(),
+    #                 f"grad_std_block_{number}": torch.stack(
+    #                     [
+    #                         param.grad.std()
+    #                         for name, param in self.backbone.named_parameters()
+    #                         if f"blocks.{number}" in name
+    #                     ]
+    #                 ).mean(),
+    #             },
+    #             on_epoch=True,
+    #             on_step=False,
+    #             sync_dist=True,
+    #         )
 
     def validation_step(
         self, batch: List[torch.Tensor], batch_idx: int, dataloader_idx: int = None
