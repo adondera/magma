@@ -3,6 +3,33 @@ import torch.nn.functional as F
 import numpy as np
 
 
+def euclidean_across_channels(x1, x2):
+    """
+    Given two input X1, X2 of shape (c, h, w), flattens the last two dimensions and
+    calculates the euclidean distance between pairs of channels and returns the average 
+    """
+    c, h, w = x1.size()
+    x1 = x1.view(c, -1)
+    x2 = x2.view(c, -1)
+    return ((x1 - x2) ** 2).sum(dim=-1).mean(dim=-1)
+
+def get_channel_euclidean_similarity_matrix(x, rbf_scale, scaling_factor=True):
+    b, c, _, _ = x.size()
+    sq_dist = torch.zeros(b, b, device=x.device)
+    for i in range(b):
+        for j in range(b):
+            dist = euclidean_across_channels(x[i], x[j])
+            sq_dist[i, j] = dist
+            sq_dist[j, i] = dist
+    if scaling_factor:
+        sq_dist  = sq_dist / np.sqrt(c)
+    mask = sq_dist != 0
+    sq_dist = sq_dist / sq_dist[mask].std()
+    weights = torch.exp(-sq_dist * rbf_scale)
+    mask = torch.eye(weights.size(1), dtype=torch.bool, device=weights.device)
+    weights = weights * (~mask).float()
+    return weights
+
 def get_cosine_similarity_matrix(x):
     """
     Given input X of shape (b, c, h, w) computes a similarity matrix based on cosine similarity.
@@ -26,11 +53,12 @@ def get_similarity_matrix(x, rbf_scale, scaling_factor=True):
     if scaling_factor:
         sq_dist  = sq_dist / np.sqrt(c)
     mask = sq_dist != 0
-    sq_dist = sq_dist / sq_dist[mask].std()
+    gamma = sq_dist[mask].std()
+    sq_dist = sq_dist / gamma
     weights = torch.exp(-sq_dist * rbf_scale)
     mask = torch.eye(weights.size(1), dtype=torch.bool, device=weights.device)
     weights = weights * (~mask).float()
-    return weights
+    return weights, gamma
 
 def get_distance_matrix(x):
     b, c = x.size()
