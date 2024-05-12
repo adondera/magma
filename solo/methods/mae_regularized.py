@@ -162,7 +162,7 @@ class MAE_REG(BaseMethod):
         self.layers = cfg.method_kwargs.layers
 
         # Scheduler params
-        self.configure_reg_scheduler(cfg.method_kwargs.reg_scheduler)
+        self.reg_scheduler = self.configure_reg_scheduler(cfg.method_kwargs.reg_scheduler)
 
         # gather backbone info from timm
         self._vit_embed_dim: int = self.backbone.pos_embed.size(-1)
@@ -184,6 +184,10 @@ class MAE_REG(BaseMethod):
         self.manifold_regularizer = ManifoldRegularizer(scale_euclidean_distance=self.scale_euclidean_distance, return_metrics=False)
 
         self.uniformity_weight = cfg.method_kwargs.uniformity_weight
+
+        self.disparity_loss_scheduler = self.configure_reg_scheduler(cfg.method_kwargs.disparity_loss_scheduler)
+        self.disparity_loss_gamma = cfg.method_kwargs.disparity_loss_gamma
+        self.disparity_loss_rbf_scale = cfg.method_kwargs.disparity_loss_rbf_scale
 
         self.log_images = cfg.method_kwargs.log_images
 
@@ -247,11 +251,14 @@ class MAE_REG(BaseMethod):
         cfg.method_kwargs.rbf_scale = omegaconf_select(cfg, "method_kwargs.rbf_scale", 1)
         cfg.method_kwargs.fixed_gamma = omegaconf_select(cfg, "method_kwargs.fixed_gamma", None)
 
+        cfg.method_kwargs.disparity_loss_gamma = omegaconf_select(cfg, "method_kwargs.disparity_loss_gamma", None)
+        cfg.method_kwargs.disparity_loss_rbf_scale = omegaconf_select(cfg, "method_kwargs.disparity_loss_rbf_scale", 1)
+
         return cfg
     
     def configure_reg_scheduler(self, scheduler):
         if scheduler.name == "triangle":
-            self.reg_scheduler = TriangleScheduler(
+            return TriangleScheduler(
                 start_weight=scheduler.start_weight,
                 max_weight=scheduler.max_weight,
                 end_weight=scheduler.end_weight,
@@ -260,25 +267,25 @@ class MAE_REG(BaseMethod):
                 end_epoch=scheduler.end_epoch,
             )
         elif scheduler.name == "warmup":
-            self.reg_scheduler = WarmupScheduler(
+            return WarmupScheduler(
                 base_weight=scheduler.base_weight,
                 warmup_epochs=scheduler.warmup_epochs,
                 weight=scheduler.weight,
                 reg_epochs=scheduler.reg_epochs,
             )
         elif scheduler.name == "step":
-            self.reg_scheduler = StepScheduler(
+            return StepScheduler(
                 weight=scheduler.weight,
                 steps=scheduler.steps,
                 scale=scheduler.scale,
             )
         elif scheduler.name == "interval":
-            self.reg_scheduler = IntervalScheduler(
+            return IntervalScheduler(
                 intervals=scheduler.intervals,
                 max_epochs = self.max_epochs,
             ) 
         else:
-            self.reg_scheduler = ConstantScheduler(
+            return ConstantScheduler(
                 weight=scheduler.weight,
             )
 
@@ -356,6 +363,7 @@ class MAE_REG(BaseMethod):
         imgs = batch[1]
         reconstruction_loss = 0
         regularizer_loss = 0
+        # disparity_loss = 0
         for i in range(self.num_large_crops):
             reconstruction_loss += mae_loss_func(
                 imgs[i],
@@ -367,8 +375,10 @@ class MAE_REG(BaseMethod):
         reconstruction_loss /= self.num_large_crops
 
         last_block_number = len(self.backbone.blocks) - 1
-        if last_block_number in self.layers:
-            self.layers.remove(last_block_number)
+        if len(self.layers) == 2:
+            last_block_number = self.layers[-1]
+        # if last_block_number in self.layers:
+        #     self.layers.remove(last_block_number)
 
         for layer in self.layers:
             if layer != last_block_number:
@@ -378,20 +388,47 @@ class MAE_REG(BaseMethod):
                     rbf_scale=self.rbf_scale,
                     fixed_gamma=self.fixed_gamma,
                 )
+
+                # disparity_term, disparity_metrics = self.manifold_regularizer.reverse_regularizer_loss(
+                #     out[f"mean_block_{layer}"][0],
+                #     out[f"mean_block_{last_block_number}"][0],
+                #     rbf_scale=self.disparity_loss_rbf_scale,
+                #     fixed_gamma=self.disparity_loss_gamma,
+                # )
+
                 metrics.update({f"Layer{layer}_to_Layer{last_block_number}_regularization_loss": loss_term})
+                # metrics.update({f"Layer{layer}_to_Layer{last_block_number}_disparity_regularization_loss": disparity_term})
                 for key, value in laplacian_metrics.items():
                     metrics[f"{key}_Layer{layer}"] = value
+                # for key, value in disparity_metrics.items():
+                #     metrics[f"{key}_Layer{layer}"] = value
                 regularizer_loss += loss_term
+                # disparity_loss += disparity_term
+
+        # for number, _ in enumerate(self.backbone.blocks):
+        #     if number == 11:
+        #         continue
+        #     loss_term, laplacian_metrics = self.manifold_regularizer.manifold_regularizer_loss(
+        #             out[f"mean_block_{number}"][0],
+        #             out[f"mean_block_11"][0],
+        #             rbf_scale=self.rbf_scale,
+        #             fixed_gamma=self.fixed_gamma,
+        #         )
+        #     metrics.update({f"check/Layer{number}_to_Layer11_regularization_loss": loss_term})
+        #     for key, value in laplacian_metrics.items():
+        #         metrics[f"check/{key}_{number}_Layer11"] = value
 
         # Divide loss by the number of terms in the regularization loss
         if len(self.layers) > 0:
             regularizer_loss /= len(self.layers)
+            # disparity_loss /= len(self.layers)
 
         reg_uniformity_loss = uniformity_loss(out['feats'][0])
 
         metrics.update({
             "train_reconstruction_loss": reconstruction_loss,
             "train_regularization_loss": regularizer_loss,
+            # "train_disparity_loss": disparity_loss,
             "uniformity_loss": reg_uniformity_loss,
         })
 
@@ -406,18 +443,22 @@ class MAE_REG(BaseMethod):
         
 
         regularizer_weight = self.reg_scheduler(self.current_epoch)
+        disparity_loss_weight = self.disparity_loss_scheduler(self.current_epoch)
         regularization_loss_scaled = regularizer_loss * regularizer_weight
+        # disparity_loss_scaled = disparity_loss * disparity_loss_weight
         uniformity_loss_scaled = reg_uniformity_loss * self.uniformity_weight
         metrics.update(
             {
                 "train_regularizer_weight": regularizer_weight,
+                "train_dispartiy_weight": disparity_loss_weight,
                 "train_regularization_loss_scaled": regularization_loss_scaled,
+                # "train_disparity_loss_scaled": disparity_loss_scaled,
                 "uniformity_loss_scaled": uniformity_loss_scaled,
             }
         )
 
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
-        return reconstruction_loss + class_loss + regularization_loss_scaled + uniformity_loss_scaled
+        return reconstruction_loss + class_loss + regularization_loss_scaled + uniformity_loss_scaled # + disparity_loss_scaled
 
     # def on_after_backward(self) -> None:
     #     # Log the average abs gradient of each parameter in the backbone
@@ -470,7 +511,6 @@ class MAE_REG(BaseMethod):
             Dict[str, Any]: dict with the batch_size (used for averaging), the classification loss
                 and accuracies.
         """
-
         X, targets = batch
         batch_size = targets.size(0)
         out = self.base_validation_step(X, targets)

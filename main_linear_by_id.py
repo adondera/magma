@@ -18,8 +18,10 @@
 # DEALINGS IN THE SOFTWARE.
 
 import inspect
+import json
 import logging
 import os
+from pathlib import Path
 
 import hydra
 import torch
@@ -55,6 +57,21 @@ def main(cfg: DictConfig):
     # without making the user specify every single thing about the model
     OmegaConf.set_struct(cfg, False)
     cfg = parse_cfg(cfg)
+
+    base_dir = Path("/tudelft.net/staff-umbrella/StudentsCVlab/adondera/trained_models")
+    dir_ckpt = base_dir / cfg.pretrain_method / cfg.run_id
+    args_path = str(next(dir_ckpt.glob("*.json")))
+    cfg.pretrained_feature_extractor = str(next(dir_ckpt.glob("*.ckpt")))
+
+    with open(args_path) as f:
+        method_args = json.load(f)
+    
+    cfg.name = f"linear-{method_args['name']}"
+    cfg.pretrain_method = method_args['method']
+    cfg.backbone = method_args['backbone']
+    # cfg.data = method_args['data']
+    if cfg.data.format == "dali":
+        cfg.data.format = "ram_image_folder"
 
     backbone_model = BaseMethod._BACKBONES[cfg.backbone.name]
 
@@ -122,41 +139,6 @@ def main(cfg: DictConfig):
     if not cfg.performance.disable_channel_last:
         model = model.to(memory_format=torch.channels_last)
 
-    if cfg.data.format == "dali":
-        val_data_format = "image_folder"
-    else:
-        val_data_format = cfg.data.format
-
-    train_loader, val_loader = prepare_data(
-        cfg.data.dataset,
-        train_data_path=cfg.data.train_path,
-        val_data_path=cfg.data.val_path,
-        data_format=val_data_format,
-        batch_size=cfg.optimizer.batch_size,
-        num_workers=cfg.data.num_workers,
-        auto_augment=cfg.auto_augment,
-    )
-
-    if cfg.data.format == "dali":
-        assert (
-            _dali_avaliable
-        ), "Dali is not currently avaiable, please install it first with pip3 install .[dali]."
-
-        assert not cfg.auto_augment, "Auto augmentation is not supported with Dali."
-
-        dali_datamodule = ClassificationDALIDataModule(
-            dataset=cfg.data.dataset,
-            train_data_path=cfg.data.train_path,
-            val_data_path=cfg.data.val_path,
-            num_workers=cfg.data.num_workers,
-            batch_size=cfg.optimizer.batch_size,
-            data_fraction=cfg.data.fraction,
-            dali_device=cfg.dali.device,
-        )
-
-        # use normal torchvision dataloader for validation to save memory
-        dali_datamodule.val_dataloader = lambda: val_loader
-
     # 1.7 will deprecate resume_from_checkpoint, but for the moment
     # the argument is the same, but we need to pass it as ckpt_path to trainer.fit
     ckpt_path, wandb_run_id = None, None
@@ -205,6 +187,42 @@ def main(cfg: DictConfig):
         # lr logging
         lr_monitor = LearningRateMonitor(logging_interval="step")
         callbacks.append(lr_monitor)
+
+    if cfg.data.format == "dali":
+        val_data_format = "image_folder"
+    else:
+        val_data_format = cfg.data.format
+
+    train_loader, val_loader = prepare_data(
+        cfg.data.dataset,
+        train_data_path=cfg.data.train_path,
+        val_data_path=cfg.data.val_path,
+        data_format=val_data_format,
+        batch_size=cfg.optimizer.batch_size,
+        num_workers=cfg.data.num_workers,
+        auto_augment=cfg.auto_augment,
+    )
+
+    if cfg.data.format == "dali":
+        assert (
+            _dali_avaliable
+        ), "Dali is not currently avaiable, please install it first with pip3 install .[dali]."
+
+        assert not cfg.auto_augment, "Auto augmentation is not supported with Dali."
+
+        dali_datamodule = ClassificationDALIDataModule(
+            dataset=cfg.data.dataset,
+            train_data_path=cfg.data.train_path,
+            val_data_path=cfg.data.val_path,
+            num_workers=cfg.data.num_workers,
+            batch_size=cfg.optimizer.batch_size,
+            data_fraction=cfg.data.fraction,
+            dali_device=cfg.dali.device,
+        )
+
+        # use normal torchvision dataloader for validation to save memory
+        dali_datamodule.val_dataloader = lambda: val_loader
+
 
     trainer_kwargs = OmegaConf.to_container(cfg)
     # we only want to pass in valid Trainer args, the rest may be user specific

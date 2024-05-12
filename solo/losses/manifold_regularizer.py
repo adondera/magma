@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from solo.utils.embedding_propagation import get_similarity_matrix, get_laplacian
+from solo.utils.embedding_propagation import get_similarity_matrix, get_laplacian, get_distance_matrix, get_disparity_matrix
 
 class ManifoldRegularizer():
     def __init__(self, scale_euclidean_distance: bool = False, return_metrics: bool = False):
@@ -52,3 +52,23 @@ class ManifoldRegularizer():
         self.last_similarity_matrix = weights_matrix
 
         return regularizer_loss_term, metrics #, collapse_loss_term
+    
+    def reverse_regularizer_loss(self, x: torch.Tensor, y: torch.Tensor, rbf_scale=1.0, fixed_gamma=None):
+        weights_matrix, gamma = get_disparity_matrix(x, rbf_scale=rbf_scale, scaling_factor=self.scale_euclidean_distance, fixed_gamma=fixed_gamma)
+        metrics = {}
+        metrics['gamma_disparity_loss'] = gamma
+        distance_matrix = get_distance_matrix(y)
+        epsilon = 0.1
+        return torch.mean(weights_matrix * 1 / (distance_matrix + epsilon)), metrics
+        # D = torch.diag(weights_matrix.sum(dim=-1))
+        # subspace = y.T @ D @ y
+
+        # regularizer_loss_term = torch.trace(y.T @ laplacian @ y) / (x.shape[0] ** 2)
+        # collapse_loss_term = (
+        #     (subspace - torch.eye(subspace.shape[0], device=x.device)).pow(2).mean()
+        # )
+
+        # self.last_laplacian_matrix = laplacian
+        # self.last_similarity_matrix = weights_matrix
+
+        # return regularizer_loss_term, metrics #, collapse_loss_term

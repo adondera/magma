@@ -25,6 +25,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from pl_bolts.optimizers.lr_scheduler import LinearWarmupCosineAnnealingLR
+import torchmetrics
 from solo.utils.lars import LARS
 from solo.utils.metrics import accuracy_at_k, weighted_mean
 from solo.utils.misc import (
@@ -109,6 +110,12 @@ class LinearModel(pl.LightningModule):
 
         # classifier
         self.classifier = nn.Linear(features_dim, cfg.data.num_classes)  # type: ignore
+        if cfg.nonlinear:
+            self.classifier = nn.Sequential(
+                nn.Linear(features_dim, features_dim // 2),
+                nn.ReLU(),
+                nn.Linear(features_dim // 2, cfg.data.num_classes),
+        )
 
         # mixup/cutmix function
         self.mixup_func: Callable = mixup_func
@@ -146,6 +153,14 @@ class LinearModel(pl.LightningModule):
 
         # if finetuning the backbone
         self.finetune: bool = cfg.finetune
+
+        self.accuracy = torchmetrics.Accuracy(task='multiclass', num_classes=cfg.data.num_classes)
+
+        self.per_class_accuracy = torchmetrics.Accuracy(
+            task='multiclass', 
+            num_classes=cfg.data.num_classes, 
+            average='none',  # Compute accuracy for each class individually
+         )
 
         # for performance
         self.no_channel_last = cfg.performance.disable_channel_last
@@ -191,6 +206,8 @@ class LinearModel(pl.LightningModule):
         cfg.performance.disable_channel_last = omegaconf_select(
             cfg, "performance.disable_channel_last", False
         )
+
+        cfg.nonlinear = omegaconf_select(cfg, "nonlinear", False)
 
         return cfg
 
@@ -320,6 +337,9 @@ class LinearModel(pl.LightningModule):
         else:
             out = self(X)["logits"]
             loss = F.cross_entropy(out, target)
+
+            self.accuracy(out, target)
+            self.per_class_accuracy(out, target)
             acc1, acc5 = accuracy_at_k(out, target, top_k=(1, 5))
             metrics.update({"loss": loss, "acc1": acc1, "acc5": acc5})
 
@@ -381,9 +401,15 @@ class LinearModel(pl.LightningModule):
             outs (List[Dict[str, Any]]): list of outputs of the validation step.
         """
 
+        self.log('val_acc', self.accuracy.compute() * 100)
+        per_class_acc = self.per_class_accuracy.compute()
+        for i, acc in enumerate(per_class_acc):
+            self.log(f'class_{i}_acc', acc * 100, prog_bar=False)
+
         val_loss = weighted_mean(outs, "val_loss", "batch_size")
         val_acc1 = weighted_mean(outs, "val_acc1", "batch_size")
         val_acc5 = weighted_mean(outs, "val_acc5", "batch_size")
 
         log = {"val_loss": val_loss, "val_acc1": val_acc1, "val_acc5": val_acc5}
         self.log_dict(log, sync_dist=True)
+        self.accuracy.reset()

@@ -109,6 +109,11 @@ def vicreg_loss_func(
 
     var_loss = variance_loss(z1, z2)
     cov_loss = covariance_loss(z1, z2)
+    losses = {
+        "train_sim_loss": sim_loss,
+        "train_var_loss": var_loss,
+        "train_cov_loss": cov_loss,
+    }
 
     loss = sim_loss_weight * sim_loss + var_loss_weight * var_loss + cov_loss_weight * cov_loss
-    return loss
+    return loss, losses
