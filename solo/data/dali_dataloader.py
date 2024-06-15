@@ -21,10 +21,12 @@ import math
 import os
 from pathlib import Path
 from typing import Callable, List, Optional, Union
+from subprocess import call
 
 import nvidia.dali.fn as fn
 import nvidia.dali.ops as ops
 import nvidia.dali.types as types
+import nvidia.dali.tfrecord as tfrec
 import omegaconf
 import pytorch_lightning as pl
 import torch
@@ -193,6 +195,7 @@ class NormalPipelineBuilder:
         num_threads: int = 4,
         seed: int = 12,
         data_fraction: float = -1.0,
+        use_tfrecords: bool = False
     ):
         """Initializes the pipeline for validation or linear eval training.
 
@@ -226,6 +229,8 @@ class NormalPipelineBuilder:
         self.device = device
         self.validation = validation
 
+        self.use_tfrecords = use_tfrecords
+
         # manually load files and labels
         labels = sorted(Path(entry.name) for entry in os.scandir(data_path) if entry.is_dir())
         data = [
@@ -244,14 +249,52 @@ class NormalPipelineBuilder:
             files, _, labels, _ = train_test_split(
                 files, labels, train_size=data_fraction, stratify=labels, random_state=42
             )
+        if self.use_tfrecords:
+            print("Using TFRecord reader")
 
-        self.reader = ops.readers.File(
-            files=files,
-            labels=labels,
-            shard_id=shard_id,
-            num_shards=num_shards,
-            shuffle_after_epoch=not self.validation,
-        )
+            tf_files = sorted(os.listdir(os.path.join(data_path, "data")))
+
+            # Create dir for idx files if not exists.
+            idx_files_dir = os.path.join(data_path, "idx_files")
+            if not os.path.exists(idx_files_dir):
+                os.mkdir(idx_files_dir)
+
+            tfrec_path_list = []
+            idx_path_list = []
+            n_samples = 0
+            # Create idx files and create TFRecordPipelines.
+            for tf_file in tf_files:
+                # Path of tf_file and idx file.
+                tfrec_path = os.path.join(data_path, "data", tf_file)
+                tfrec_path_list.append(tfrec_path)
+                idx_path = os.path.join(idx_files_dir, tf_file + "_idx")
+                idx_path_list.append(idx_path)
+                # Create idx file for tf_file by calling tfrecord2idx script.
+                if not os.path.isfile(idx_path):
+                    call(["tfrecord2idx", tfrec_path, idx_path])
+                with open(idx_path, "r") as f:
+                    n_samples += len(f.readlines())
+
+            self.reader = fn.readers.tfrecord(
+                path=tfrec_path_list,
+                index_path=idx_path_list,
+                features={
+                    "image/encoded": tfrec.FixedLenFeature((), tfrec.string, ""),  # type: ignore
+                    "image/class/label": tfrec.FixedLenFeature([1], tfrec.int64, -1),  # type: ignore
+                },
+                num_shards=num_shards,
+                shard_id=shard_id,
+                name="Reader",
+            )
+        else:
+            self.reader = ops.readers.File(
+                files=files,
+                labels=labels,
+                shard_id=shard_id,
+                num_shards=num_shards,
+                shuffle_after_epoch=not self.validation,
+            )
+
         decoder_device = "mixed" if self.device == "gpu" else "cpu"
         device_memory_padding = 211025920 if decoder_device == "mixed" else 0
         host_memory_padding = 140544512 if decoder_device == "mixed" else 0
@@ -365,6 +408,9 @@ def build_transform_pipeline_dali(dataset, cfg, dali_device):
         "cifar100": ((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2762)),
         "stl10": ((0.4914, 0.4823, 0.4466), (0.247, 0.243, 0.261)),
         "imagenet100": (IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD),
+        "imagenet75": (IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD),
+        "imagenet50": (IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD),
+        "imagenet25": (IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD),
         "imagenet": (IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD),
     }
 
@@ -467,6 +513,7 @@ class PretrainPipelineBuilder:
         no_labels: bool = False,
         encode_indexes_into_labels: bool = False,
         data_fraction: float = -1.0,
+        use_tfrecords: bool = False
     ):
         """Builder for a pretrain pipeline with Nvidia DALI.
 
@@ -498,6 +545,7 @@ class PretrainPipelineBuilder:
         self.num_threads = num_threads
         self.device_id = device_id
         self.seed = seed + device_id
+        self.use_tfrecords = use_tfrecords
 
         self.device = device
 
@@ -518,7 +566,7 @@ class PretrainPipelineBuilder:
 
         if data_fraction > 0:
             assert data_fraction < 1, "Only use data_fraction for values smaller than 1."
-
+            print(f"Using a fraction of {data_fraction} for the train_size.")
             if no_labels:
                 labels = [-1] * len(files)
             else:
@@ -552,13 +600,53 @@ class PretrainPipelineBuilder:
             # use the encoded labels which will be decoded later
             labels = encoded_labels
 
-        self.reader = ops.readers.File(
-            files=files,
-            labels=labels,
-            shard_id=shard_id,
-            num_shards=num_shards,
-            shuffle_after_epoch=random_shuffle,
-        )
+        if self.use_tfrecords:
+            print("Using TFRecord reader")
+
+            tf_files = sorted(os.listdir(os.path.join(data_path, "data")))
+
+            # Create dir for idx files if not exists.
+            idx_files_dir = os.path.join(data_path, "idx_files")
+            if not os.path.exists(idx_files_dir):
+                os.mkdir(idx_files_dir)
+
+            tfrec_path_list = []
+            idx_path_list = []
+            n_samples = 0
+            # Create idx files and create TFRecordPipelines.
+            for tf_file in tf_files:
+                # Path of tf_file and idx file.
+                tfrec_path = os.path.join(data_path, "data", tf_file)
+                tfrec_path_list.append(tfrec_path)
+                idx_path = os.path.join(idx_files_dir, tf_file + "_idx")
+                idx_path_list.append(idx_path)
+                # Create idx file for tf_file by calling tfrecord2idx script.
+                if not os.path.isfile(idx_path):
+                    call(["tfrecord2idx", tfrec_path, idx_path])
+                with open(idx_path, "r") as f:
+                    n_samples += len(f.readlines())
+
+
+            self.reader = fn.readers.tfrecord(
+                path=tfrec_path_list,
+                index_path=idx_path_list,
+                features={
+                    "image/encoded": tfrec.FixedLenFeature((), tfrec.string, ""),  # type: ignore
+                    "image/class/label": tfrec.FixedLenFeature([1], tfrec.int64, -1),  # type: ignore
+                },
+                num_shards=num_shards,
+                shard_id=shard_id,
+                name="Reader",
+                random_shuffle=True,
+            )
+        else:
+            self.reader = ops.readers.File(
+                files=files,
+                labels=labels,
+                shard_id=shard_id,
+                num_shards=num_shards,
+                shuffle_after_epoch=random_shuffle,
+            )   
 
         decoder_device = "mixed" if self.device == "gpu" else "cpu"
         device_memory_padding = 211025920 if decoder_device == "mixed" else 0
@@ -578,7 +666,11 @@ class PretrainPipelineBuilder:
         """Defines the computational pipeline for dali operations."""
 
         # read images from memory
-        inputs, labels = self.reader(name="Reader")
+        if self.use_tfrecords:
+            inputs = self.reader['image/encoded']
+            labels = self.reader["image/class/label"] - 1
+        else:
+            inputs, labels = self.reader(name="Reader")
 
         images = self.decode(inputs)
 
@@ -717,6 +809,7 @@ class PretrainDALIDataModule(pl.LightningDataModule):
         data_fraction: float = -1.0,
         dali_device: str = "gpu",
         encode_indexes_into_labels: bool = False,
+        use_tfrecords: bool = False
     ):
         """DataModule for pretrain data using Nvidia DALI.
 
@@ -764,6 +857,8 @@ class PretrainDALIDataModule(pl.LightningDataModule):
         # hack to encode image indexes into the labels
         self.encode_indexes_into_labels = encode_indexes_into_labels
 
+        self.use_tfrecords = use_tfrecords
+
     @staticmethod
     def add_and_assert_specific_cfg(cfg: omegaconf.DictConfig) -> omegaconf.DictConfig:
         """Adds method specific default values/checks for config.
@@ -807,6 +902,7 @@ class PretrainDALIDataModule(pl.LightningDataModule):
             no_labels=self.no_labels,
             encode_indexes_into_labels=self.encode_indexes_into_labels,
             data_fraction=self.data_fraction,
+            use_tfrecords = self.use_tfrecords
         )
         train_pipeline = train_pipeline_builder.pipeline(
             batch_size=train_pipeline_builder.batch_size,
@@ -852,6 +948,7 @@ class ClassificationDALIDataModule(pl.LightningDataModule):
         num_workers: int = 4,
         data_fraction: float = -1.0,
         dali_device: str = "gpu",
+        use_tfrecords: bool = False
     ):
         """DataModule for classification data using Nvidia DALI.
 
@@ -884,8 +981,10 @@ class ClassificationDALIDataModule(pl.LightningDataModule):
         self.dali_device = dali_device
         assert dali_device in ["gpu", "cpu"]
 
+        self.use_tfrecords = use_tfrecords
+
         # handle custom data by creating the needed pipeline
-        if dataset in ["imagenet100", "imagenet"]:
+        if dataset in ["imagenet100", "imagenet75", "imagenet50", "imagenet25", "imagenet"]:
             self.pipeline_class = NormalPipelineBuilder
         elif dataset == "custom":
             self.pipeline_class = CustomNormalPipelineBuilder
@@ -909,6 +1008,8 @@ class ClassificationDALIDataModule(pl.LightningDataModule):
 
     def setup(self, stage: Optional[str] = None):
         # extra info about training
+        if not self.trainer:
+            self.trainer = pl.Trainer()
         self.device_id = self.trainer.local_rank
         self.shard_id = self.trainer.global_rank
         self.num_shards = self.trainer.world_size
@@ -930,6 +1031,7 @@ class ClassificationDALIDataModule(pl.LightningDataModule):
             num_shards=self.num_shards,
             num_threads=self.num_workers,
             data_fraction=self.data_fraction,
+            use_tfrecords = self.use_tfrecords
         )
         train_pipeline = train_pipeline_builder.pipeline(
             batch_size=train_pipeline_builder.batch_size,

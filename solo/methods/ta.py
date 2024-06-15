@@ -20,20 +20,24 @@
 
 from typing import Any, Dict, List, Sequence, Tuple
 
-import math
 import numpy as np
 import omegaconf
 import torch
 import torch.nn as nn
+
 import torch.nn.functional as F
 from solo.losses.byol import byol_loss_func
+from solo.losses.barlow import barlow_loss_func
 from solo.methods.base import BaseMomentumMethod
 from solo.utils.momentum import initialize_momentum_params
+from solo.utils.misc import omegaconf_select
+from solo.utils.ta_attention import TA_Attention
+from solo.utils.embedding_propagation import embedding_propagation
 
 
 class BYOLWithTA(BaseMomentumMethod):
     def __init__(self, cfg: omegaconf.DictConfig):
-        """Implements BYOL (https://arxiv.org/abs/2006.07733).
+        """Implements a TA network on top of BYOL
 
         Extra cfg settings:
             method_kwargs:
@@ -44,9 +48,45 @@ class BYOLWithTA(BaseMomentumMethod):
 
         super().__init__(cfg)
 
-        proj_hidden_dim: int = cfg.method_kwargs.proj_hidden_dim
         proj_output_dim: int = cfg.method_kwargs.proj_output_dim
+        proj_hidden_dim: int = cfg.method_kwargs.proj_hidden_dim
         pred_hidden_dim: int = cfg.method_kwargs.pred_hidden_dim
+        num_heads: int = cfg.method_kwargs.num_heads
+        attn_dropout = cfg.method_kwargs.attn_dropout
+        proj_dropout = cfg.method_kwargs.proj_dropout
+        qkv_hidden_dim = cfg.method_kwargs.qkv_hidden_dim
+        query_dim = cfg.method_kwargs.query_dim
+        value_dim = cfg.method_kwargs.value_dim
+        self.gamma = cfg.method_kwargs.gamma
+        self.regularizer_weight = cfg.method_kwargs.regularizer_weight
+
+        self.ta_lr = cfg.optimizer.ta_lr
+
+        # assert (
+        #     self.features_dim % num_heads == 0
+        # ), "features_dim must be divisible by num_heads"
+
+        self.student_TA = TA_Attention(
+            value_dim=value_dim,
+            query_dim=query_dim,
+            input_dim=proj_output_dim,
+            num_heads=num_heads,
+            attn_dropout=attn_dropout,
+            proj_dropout=proj_dropout,
+            hidden_dim=qkv_hidden_dim,
+        )
+
+        self.teacher_TA = TA_Attention(
+            value_dim=value_dim,
+            query_dim=query_dim,
+            input_dim=proj_output_dim,
+            num_heads=num_heads,
+            attn_dropout=attn_dropout,
+            proj_dropout=proj_dropout,
+            hidden_dim=qkv_hidden_dim,
+        )
+
+        initialize_momentum_params(self.student_TA, self.teacher_TA)
 
         # projector
         self.projector = nn.Sequential(
@@ -63,28 +103,7 @@ class BYOLWithTA(BaseMomentumMethod):
             nn.ReLU(),
             nn.Linear(proj_hidden_dim, proj_output_dim),
         )
-
-        # TODO: Add multi head attention
-        # Initialize student TA network parameters
-        self.query_matrix = nn.Linear(proj_output_dim, proj_output_dim, bias=False)
-        self.key_matrix = nn.Linear(proj_output_dim, proj_output_dim, bias=False)
-        self.value_matrix = nn.Linear(proj_output_dim, proj_output_dim, bias=False)
-
-        # Initialize momentum teacher TA network parameters
-        self.momentum_query_matrix = nn.Linear(
-            proj_output_dim, proj_output_dim, bias=False
-        )
-        self.momentum_key_matrix = nn.Linear(
-            proj_output_dim, proj_output_dim, bias=False
-        )
-        self.momentum_value_matrix = nn.Linear(
-            proj_output_dim, proj_output_dim, bias=False
-        )
-
         initialize_momentum_params(self.projector, self.momentum_projector)
-        initialize_momentum_params(self.query_matrix, self.momentum_query_matrix)
-        initialize_momentum_params(self.key_matrix, self.momentum_key_matrix)
-        initialize_momentum_params(self.value_matrix, self.momentum_value_matrix)
 
         # predictor
         self.predictor = nn.Sequential(
@@ -93,6 +112,8 @@ class BYOLWithTA(BaseMomentumMethod):
             nn.ReLU(),
             nn.Linear(pred_hidden_dim, proj_output_dim),
         )
+
+        self.norm = nn.BatchNorm1d(proj_output_dim)
 
     @staticmethod
     def add_and_assert_specific_cfg(cfg: omegaconf.DictConfig) -> omegaconf.DictConfig:
@@ -110,6 +131,24 @@ class BYOLWithTA(BaseMomentumMethod):
         assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.proj_hidden_dim")
         assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.proj_output_dim")
         assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.pred_hidden_dim")
+        assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.num_heads")
+        assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.attn_dropout")
+        assert not omegaconf.OmegaConf.is_missing(cfg, "method_kwargs.proj_dropout")
+
+        cfg.optimizer.ta_lr = omegaconf_select(cfg, "optimizer.ta_lr", cfg.optimizer.lr)
+        cfg.method_kwargs.qkv_hidden_dim = omegaconf_select(
+            cfg, "method_kwargs.qkv_hidden_dim", None
+        )
+        cfg.method_kwargs.query_dim = omegaconf_select(
+            cfg, "method_kwargs.query_dim", cfg.method_kwargs.proj_output_dim
+        )
+        cfg.method_kwargs.value_dim = omegaconf_select(
+            cfg, "method_kwargs.value_dim", cfg.method_kwargs.proj_output_dim
+        )
+        cfg.method_kwargs.gamma = omegaconf_select(cfg, "method_kwargs.gamma", 0)
+        cfg.method_kwargs.regularizer_weight = omegaconf_select(
+            cfg, "method_kwargs.regularizer_weight", 0.0
+        )
 
         return cfg
 
@@ -122,11 +161,14 @@ class BYOLWithTA(BaseMomentumMethod):
         """
 
         extra_learnable_params = [
-            {"name": "projector", "params": self.projector.parameters()},
             {"name": "predictor", "params": self.predictor.parameters()},
-            {"name": "query_matrix", "params": self.query_matrix.parameters()},
-            {"name": "key_matrix", "params": self.key_matrix.parameters()},
-            {"name": "value_matrix", "params": self.value_matrix.parameters()},
+            {"name": "projector", "params": self.projector.parameters()},
+            {
+                "name": "student_TA",
+                "params": self.student_TA.parameters(),
+                "lr": self.ta_lr,
+            },
+            {"name": "norm", "params": self.norm.parameters()},
         ]
         return super().learnable_params + extra_learnable_params
 
@@ -140,61 +182,9 @@ class BYOLWithTA(BaseMomentumMethod):
 
         extra_momentum_pairs = [
             (self.projector, self.momentum_projector),
-            (self.query_matrix, self.momentum_query_matrix),
-            (self.key_matrix, self.momentum_key_matrix),
-            (self.value_matrix, self.momentum_value_matrix),
+            (self.student_TA, self.teacher_TA),
         ]
         return super().momentum_pairs + extra_momentum_pairs
-
-    # def forward(self, X: torch.Tensor) -> Dict[str, Any]:
-    #     """Performs forward pass of the online backbone, projector and predictor.
-
-    #     Args:
-    #         X (torch.Tensor): batch of images in tensor format.
-
-    #     Returns:
-    #         Dict[str, Any]: a dict containing the outputs of the parent and the projected features.
-    #     """
-
-    #     out = super().forward(X)
-    #     z = self.projector(out["feats"])
-    #     p = self.predictor(z)
-    #     out.update({"z": z, "p": p})
-    #     return out
-
-    # def multicrop_forward(self, X: torch.tensor) -> Dict[str, Any]:
-    #     """Performs the forward pass for the multicrop views.
-
-    #     Args:
-    #         X (torch.Tensor): batch of images in tensor format.
-
-    #     Returns:
-    #         Dict[]: a dict containing the outputs of the parent
-    #             and the projected features.
-    #     """
-
-    #     out = super().multicrop_forward(X)
-    #     z = self.projector(out["feats"])
-    #     p = self.predictor(z)
-    #     out.update({"z": z, "p": p})
-    #     return out
-
-    # @torch.no_grad()
-    # def momentum_forward(self, X: torch.Tensor) -> Dict:
-    #     """Performs the forward pass of the momentum backbone and projector.
-
-    #     Args:
-    #         X (torch.Tensor): batch of images in tensor format.
-
-    #     Returns:
-    #         Dict[str, Any]: a dict containing the outputs of
-    #             the parent and the momentum projected features.
-    #     """
-
-    #     out = super().momentum_forward(X)
-    #     z = self.momentum_projector(out["feats"])
-    #     out.update({"z": z})
-    #     return out
 
     def training_step(self, batch: Sequence[Any], batch_idx: int) -> torch.Tensor:
         """Training step for BYOL reusing BaseMethod training step.
@@ -210,71 +200,107 @@ class BYOLWithTA(BaseMomentumMethod):
 
         out = super().training_step(batch, batch_idx)
 
-        # out['feats'] has two tensors of size [batch_size, dimension]
-        feats1, feats2 = out["feats"]
-        momentum_feats1, momentum_feats2 = out["momentum_feats"]
-
-        # ------- projection -------
-        z1 = self.projector(feats1)
-        z2 = self.projector(feats2)
-
-        with torch.no_grad():
-            momentum_z1 = self.momentum_projector(momentum_feats1)
-            momentum_z2 = self.momentum_projector(momentum_feats2)
-        
-        # attention mechanism
-        student_representations = torch.cat([z1, z2])
-        student_queries = self.query_matrix(student_representations)
-        student_keys = self.key_matrix(student_representations)
-        student_values = self.value_matrix(student_representations)
-
-        with torch.no_grad():
-            teacher_representations = torch.cat([momentum_z1, momentum_z2])
-            teacher_queries = self.momentum_query_matrix(teacher_representations)
-            teacher_keys = self.momentum_key_matrix(teacher_representations)
-            teacher_values = self.momentum_value_matrix(teacher_representations)
-
-        d = student_queries.shape[-1]
-        student_scores = torch.mm(student_queries, torch.cat([student_keys, teacher_keys]).T) / math.sqrt(d)
-        student_attention_weights = torch.nn.functional.softmax(student_scores, dim=-1)
-        student_y = torch.mm(student_attention_weights, torch.cat([student_values, teacher_values]))
-        # calculate y1 and y2 for student
-        student_y = [student_y[:student_y.shape[0]//2], student_y[student_y.shape[0]//2:]]
-        # pass y1 and y2 to the predictor
-        p1, p2 = [self.predictor(y) for y in student_y]
-
-        with torch.no_grad():
-            teacher_scores = torch.mm(teacher_queries, torch.cat([student_keys, teacher_keys]).T) / math.sqrt(d)
-            teacher_attention_weights = torch.nn.functional.softmax(teacher_scores, dim=-1)
-            teacher_y = torch.mm(teacher_attention_weights, torch.cat([student_values, teacher_values]))
-            teacher_y1, teacher_y2 = teacher_y[:teacher_y.shape[0]//2], teacher_y[teacher_y.shape[0]//2:]
-
-        class_loss = out["loss"]
-        # Z = out["z"]
-        # P = out["p"]
-        # Z_momentum = out["momentum_z"]
-
-        # ------- negative consine similarity loss -------
         neg_cos_sim = 0
-        neg_cos_sim += byol_loss_func(p1, teacher_y2)
-        neg_cos_sim += byol_loss_func(p2, teacher_y1)
+        # barlow_residual_loss = 0
 
-        # for v1 in range(self.num_large_crops):
-        #     for v2 in np.delete(range(self.num_crops), v1):
-        #         neg_cos_sim += byol_loss_func(P[v2], Z_momentum[v1])
+        ta_output = []
+        residuals = []
+        attn_weights = []
 
-        # calculate std of features
+        for idx1 in range(self.num_large_crops):
+            for idx2 in np.delete(range(self.num_crops), idx1):
+                z = self.projector(out["feats"][idx1])
+
+                student_q, student_k, student_v = self.student_TA(self.norm(z))
+
+                with torch.no_grad():
+                    momentum_z = self.momentum_projector(out["momentum_feats"][idx2])
+                    teacher_q, teacher_k, teacher_v = self.teacher_TA(self.norm(momentum_z))
+                
+                key_pool = torch.cat([student_k, teacher_k.detach()], dim=1)
+                value_pool = torch.cat([student_v, teacher_v.detach()], dim=1)
+
+                student_residual, student_attention_weights = self.student_TA.attention(
+                    student_q, key_pool, value_pool
+                )
+                z = student_residual
+
+                with torch.no_grad():
+                    teacher_residual, _ = self.teacher_TA.attention(
+                        teacher_q, key_pool, value_pool
+                    )
+                    momentum_z = teacher_residual
+
+                ta_output.append(z)
+                residuals.append(student_residual)
+                attn_weights.append(student_attention_weights)
+
+                p = self.predictor(z)
+
+                neg_cos_sim += byol_loss_func(p, momentum_z)
+                # barlow_residual_loss += barlow_loss_func(z, momentum_z.detach(), lamb=0.0051, scale_loss=0.1)
+                # b, c = z.shape
+                # all_z = torch.cat([z, momentum_z])
+                # all_z = embedding_propagation(all_z, alpha=0.5, rbf_scale=1.0, norm_prop=False)
+
+                # z = all_z[:b]
+                # momentum_z = all_z[b:]
+
+        # barlow_residual_loss *= self.regularizer_weight
+        class_loss = out["loss"]
+
         with torch.no_grad():
             z_std = (
-                F.normalize(torch.stack(student_y[: self.num_large_crops]), dim=-1)
+                F.normalize(torch.stack(ta_output[: self.num_large_crops]), dim=-1)
                 .std(dim=1)
+                .mean()
+            )
+            z_unnormalized_std = (
+                torch.stack(ta_output[: self.num_large_crops]).std(dim=1).mean()
+            )
+            residual_unnormalized_std = torch.stack(residuals).std(dim=1).mean()
+            residual_std = (
+                F.normalize(torch.stack(residuals[: self.num_large_crops]), dim=-1)
+                .std(dim=1)
+                .mean()
+            )
+            attention_entropy = (
+                torch.special.entr(torch.stack(attn_weights)).sum(dim=-1).mean()
+            )
+            residual_svd_entropy = (
+                torch.special.entr(
+                    F.normalize(
+                        torch.linalg.svdvals(torch.stack(residuals).float()),
+                        dim=1,
+                        p=1.0,
+                    )
+                )
+                .sum(dim=-1)
+                .mean()
+            )
+            ta_svd_entropy = (
+                torch.special.entr(
+                    F.normalize(
+                        torch.linalg.svdvals(torch.stack(ta_output).float()),
+                        dim=1,
+                        p=1.0,
+                    )
+                )
+                .sum(dim=-1)
                 .mean()
             )
 
         metrics = {
             "train_neg_cos_sim": neg_cos_sim,
+            # "train_barlow_residual_loss": barlow_residual_loss,
+            "train_z_unnormalized_std": z_unnormalized_std,
             "train_z_std": z_std,
+            "train_residual_std": residual_std,
+            "train_residual_unnormalized_std": residual_unnormalized_std,
+            "attention_entropy": attention_entropy,
+            "residual_svd_entropy": residual_svd_entropy,
+            "ta_svd_entropy": ta_svd_entropy,
         }
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
 
-        return neg_cos_sim + class_loss
+        return neg_cos_sim + class_loss #+ barlow_residual_loss

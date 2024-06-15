@@ -33,11 +33,12 @@ import torch.nn as nn
 import umap
 import wandb
 from matplotlib import pyplot as plt
+from matplotlib import figure
 from omegaconf import DictConfig
 from pytorch_lightning.callbacks import Callback
 from solo.utils.misc import gather, omegaconf_select
 from tqdm import tqdm
-
+from sklearn import metrics
 
 class AutoUMAP(Callback):
     def __init__(
@@ -134,6 +135,53 @@ class AutoUMAP(Callback):
 
         self.initial_setup(trainer)
 
+    def plot_umap(self, data, Y, trainer, wandb_name, num_classes):
+        # passing to dataframe
+        df_feats = pd.DataFrame()
+        df_feats["feat_1"] = data[:, 0]
+        df_feats["feat_2"] = data[:, 1]
+        df_feats["Y"] = Y
+        fig = figure.Figure(figsize=(9, 9))
+        ax = fig.subplots(1)
+        sns.scatterplot(
+            x="feat_1",
+            y="feat_2",
+            hue="Y",
+            palette=sns.color_palette(self.color_palette, num_classes),
+            data=df_feats,
+            legend="full",
+            alpha=0.3,
+            ax=ax
+        )
+        ax.set(xlabel="", ylabel="", xticklabels=[], yticklabels=[])
+        ax.tick_params(left=False, right=False, bottom=False, top=False)
+        ax.set_title(f"UMAP at epoch {trainer.current_epoch}")
+
+        # manually improve quality of imagenet umaps
+        if num_classes > 100:
+            anchor = (0.5, 1.8)
+        else:
+            anchor = (0.5, 1.35)
+
+        fig.legend(loc="upper center", bbox_to_anchor=anchor, ncol=math.ceil(num_classes / 10))
+        fig.tight_layout()
+
+        if isinstance(trainer.logger, pl.loggers.WandbLogger):
+            trainer.logger.log_image(
+                    key=f"{wandb_name}",
+                    images=[fig],
+                    step = trainer.current_epoch,
+                )
+            # wandb.log(
+            #     {wandb_name: wandb.Image(ax)},
+            #     commit=False,
+            # )
+
+        # save plot locally as well
+        # epoch = trainer.current_epoch  # type: ignore
+        # plt.savefig(self.path / self.umap_placeholder.format(epoch))
+        # plt.close()
+
     def plot(self, trainer: pl.Trainer, module: pl.LightningModule):
         """Produces a UMAP visualization by forwarding all data of the
         first validation dataloader through the module.
@@ -144,7 +192,9 @@ class AutoUMAP(Callback):
         """
 
         device = module.device
-        data = []
+        backbone_features = []
+        # projector_features = []
+        # ta_features = []
         Y = []
 
         # set module to eval model and collect all feature representations
@@ -155,59 +205,73 @@ class AutoUMAP(Callback):
                 y = y.to(device, non_blocking=True)
 
                 feats = module(x)["feats"]
+                # z = module.projector(feats)
+                # try:
+                #     queries, keys, values = module.ta(z)
+                #     residual, _ = module.ta.attention(queries, keys, values)
+                # except:
+                #     queries, keys, values = module.student_TA(z)
+                #     residual, _ = module.student_TA.attention(queries, keys, values)
+                # # TODO: This now needs to change depending on how we want things
+                # ta_output = residual
 
+                if not feats.is_contiguous():
+                    feats = feats.contiguous()
                 feats = gather(feats)
+                # z = gather(z)
+                # ta_output = gather(ta_output)
                 y = gather(y)
 
-                data.append(feats.cpu())
+                backbone_features.append(feats.cpu())
+                # projector_features.append(z.cpu())
+                # ta_features.append(ta_output.cpu())
                 Y.append(y.cpu())
         module.train()
 
-        if trainer.is_global_zero and len(data):
-            data = torch.cat(data, dim=0).numpy()
+        if trainer.is_global_zero and len(backbone_features):
+            backbone_features = torch.cat(backbone_features, dim=0).numpy()
+            # projector_features = torch.cat(projector_features, dim=0).numpy()
+            # ta_features = torch.cat(ta_features, dim=0).numpy()
             Y = torch.cat(Y, dim=0)
             num_classes = len(torch.unique(Y))
             Y = Y.numpy()
 
-            data = umap.UMAP(n_components=2).fit_transform(data)
+            backbone_features = umap.UMAP(n_components=2, random_state=42).fit_transform(backbone_features)
+            # projector_features = umap.UMAP(n_components=2).fit_transform(projector_features)
+            # ta_features = umap.UMAP(n_components=2).fit_transform(ta_features)
 
-            # passing to dataframe
-            df = pd.DataFrame()
-            df["feat_1"] = data[:, 0]
-            df["feat_2"] = data[:, 1]
-            df["Y"] = Y
-            plt.figure(figsize=(9, 9))
-            ax = sns.scatterplot(
-                x="feat_1",
-                y="feat_2",
-                hue="Y",
-                palette=sns.color_palette(self.color_palette, num_classes),
-                data=df,
-                legend="full",
-                alpha=0.3,
-            )
-            ax.set(xlabel="", ylabel="", xticklabels=[], yticklabels=[])
-            ax.tick_params(left=False, right=False, bottom=False, top=False)
+            silhouette_score_backbone = metrics.silhouette_score(backbone_features, Y)
+            # silhouette_score_projector = metrics.silhouette_score(projector_features, Y)
+            # silhouette_score_ta = metrics.silhouette_score(ta_features, Y)
 
-            # manually improve quality of imagenet umaps
-            if num_classes > 100:
-                anchor = (0.5, 1.8)
-            else:
-                anchor = (0.5, 1.35)
+            chi_backbone = metrics.calinski_harabasz_score(backbone_features, Y)
+            # chi_projector = metrics.calinski_harabasz_score(projector_features, Y)
+            # chi_ta = metrics.calinski_harabasz_score(ta_features, Y)
 
-            plt.legend(loc="upper center", bbox_to_anchor=anchor, ncol=math.ceil(num_classes / 10))
-            plt.tight_layout()
+            dbi_backbone = metrics.davies_bouldin_score(backbone_features, Y)
+            # dbi_projector = metrics.davies_bouldin_score(projector_features, Y)
+            # dbi_ta = metrics.davies_bouldin_score(ta_features, Y)
+
+            metrics_dict = {
+                "backbone_silhouette_score": silhouette_score_backbone,
+                # "projector_silhouette_score": silhouette_score_projector,
+                # "ta_silhouette_score": silhouette_score_ta,
+                "backbone_calinski_harabasz_score": chi_backbone,
+                # "projector_calinski_harabasz_score": chi_projector,
+                # "ta_calinski_harabasz_score": chi_ta,
+                "backbone_davies_bouldin_score": dbi_backbone,
+                # "projector_davies_bouldin_score": dbi_projector,
+                # "ta_davies_bouldin_score": dbi_ta,
+            }
 
             if isinstance(trainer.logger, pl.loggers.WandbLogger):
-                wandb.log(
-                    {"validation_umap": wandb.Image(ax)},
-                    commit=False,
+                trainer.logger.log_metrics(
+                    metrics_dict,
                 )
 
-            # save plot locally as well
-            epoch = trainer.current_epoch  # type: ignore
-            plt.savefig(self.path / self.umap_placeholder.format(epoch))
-            plt.close()
+            self.plot_umap(backbone_features, Y, trainer, "validation_umap", num_classes)
+            # self.plot_umap(projector_features, Y, trainer, "projector_umap", num_classes)
+            # self.plot_umap(ta_features, Y, trainer, "ta_umap", num_classes)
 
     def on_validation_end(self, trainer: pl.Trainer, module: pl.LightningModule):
         """Tries to generate an up-to-date UMAP visualization of the features
@@ -271,14 +335,15 @@ class OfflineUMAP:
         Y = Y.numpy()
 
         print("Creating UMAP")
-        data = umap.UMAP(n_components=2).fit_transform(data)
+        data = umap.UMAP(n_components=2, verbose=True).fit_transform(data)
 
         # passing to dataframe
         df = pd.DataFrame()
         df["feat_1"] = data[:, 0]
         df["feat_2"] = data[:, 1]
         df["Y"] = Y
-        plt.figure(figsize=(9, 9))
+        return df
+        # plt.figure(figsize=(9, 9))
         ax = sns.scatterplot(
             x="feat_1",
             y="feat_2",

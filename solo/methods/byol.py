@@ -192,10 +192,12 @@ class BYOL(BaseMomentumMethod):
         # calculate std of features
         with torch.no_grad():
             z_std = F.normalize(torch.stack(Z[: self.num_large_crops]), dim=-1).std(dim=1).mean()
+            unnormalized_z_std = torch.stack(Z[: self.num_large_crops]).std(dim=1).mean()
 
         metrics = {
             "train_neg_cos_sim": neg_cos_sim,
             "train_z_std": z_std,
+            "train_z_unnormalized_std": unnormalized_z_std,
         }
         self.log_dict(metrics, on_epoch=True, sync_dist=True)
 

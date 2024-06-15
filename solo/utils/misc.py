@@ -245,7 +245,7 @@ def compute_dataset_size(
             [cifar10, cifar100, stl10]. Defaults to None.
         train (Optional[bool]): train dataset flag. Defaults to True.
         data_path (Optional[str]): path to the folder. Defaults to None.
-        data_format (Optional[str]): format of the data, either "image_folder" or "h5".
+        data_format (Optional[str]): format of the data, either "image_folder", "h5", or "ram_image_folder".
             Defaults to "image_folder".
         no_labels (Optional[bool]): if the dataset has no labels. Defaults to False.
         data_fraction (Optional[float]): amount of data to use. Defaults to -1.
@@ -442,3 +442,38 @@ def omegaconf_select(cfg, key, default=None):
     if value == "None":
         return None
     return value
+
+
+# Adds forward hooks to print the output of all intermediate layers in a module
+# This is called recursively for all layers
+def add_intermediate_layers_hook(model: nn.Module):
+    # Count layer number
+    global layer_count
+    layer_count = 0
+
+    def return_hook_fn_with_name(name):
+        def hook_fn(module, input, output):
+            with open('debug.txt', 'a') as f:
+                print(f"Layer name: {name} - Output shape: {output.shape} - Output mean {torch.mean(output)}", file=f)
+        return hook_fn
+
+    # def hook_fn(module, input, output):
+    #         global layer_count
+    #         with open('debug.txt', 'a') as f:
+    #             print(f"{layer_count} - {name} - {output.shape} - {torch.mean(output)}", file=f)
+    #         layer_count += 1
+
+    for (name, child_module) in model.named_modules():
+        child_module.register_forward_hook(return_hook_fn_with_name(name))
+
+    # def add_debug_hook(module):
+    #     def hook_fn(module, input, output):
+    #         global layer_count
+    #         with open('debug.txt', 'a') as f:
+    #             name = module.
+    #             print(f"{layer_count} - {module.__class__.__name__} - {output.shape} - Output: {torch.mean(output)} - Input: {torch.mean(input[0])}", file=f)
+    #         layer_count += 1
+    
+    #     module.register_forward_hook(hook_fn)
+
+    # model.apply(add_debug_hook)

@@ -20,6 +20,12 @@ _N_CLASSES_PER_DATASET = {
     "stl10": 10,
     "imagenet": 1000,
     "imagenet100": 100,
+    "imagenet75": 75,
+    "imagenet50": 50,
+    "imagenet25": 25,
+    "imagenette": 10,
+    "imagewoof": 10,
+    "tiny-imagenet": 200,
 }
 
 _SUPPORTED_DATASETS = [
@@ -28,6 +34,12 @@ _SUPPORTED_DATASETS = [
     "stl10",
     "imagenet",
     "imagenet100",
+    "imagenet75",
+    "imagenet50",
+    "imagenet25",
+    "imagenette",
+    "imagewoof",
+    "tiny-imagenet",
     "custom",
 ]
 
@@ -53,6 +65,7 @@ def add_and_assert_dataset_cfg(cfg: omegaconf.DictConfig) -> omegaconf.DictConfi
     cfg.data.no_labels = omegaconf_select(cfg, "data.no_labels", False)
     cfg.data.fraction = omegaconf_select(cfg, "data.fraction", -1)
     cfg.debug_augmentations = omegaconf_select(cfg, "debug_augmentations", False)
+    cfg.data.tfrecord = omegaconf_select(cfg, "data.tfrecord", False)
 
     return cfg
 
@@ -139,7 +152,7 @@ def parse_cfg(cfg: omegaconf.DictConfig):
     cfg.data.num_small_crops = num_small_crops
 
     if cfg.data.format == "dali":
-        assert cfg.data.dataset in ["imagenet100", "imagenet", "custom"]
+        assert cfg.data.dataset in ["imagenet100", "imagenet", "imagenette", "imagenet75", "imagenet50", "imagenet25", "custom"]
 
     # adjust lr according to batch size
     cfg.num_nodes = omegaconf_select(cfg, "num_nodes", 1)

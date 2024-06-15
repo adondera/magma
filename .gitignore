@@ -1,3 +1,13 @@
+*.txt
+
+# ipynb checkpoints
+.ipynb_checkpoints
+*.ipynb
+
+# images
+*.png
+*.gif
+
 # tensorboard dir
 runs/
 
@@ -8,6 +18,9 @@ wandb*/
 
 # umap dir
 auto_umap/
+
+# scripts dir
+scripts/
 
 # datasets dir
 datasets/

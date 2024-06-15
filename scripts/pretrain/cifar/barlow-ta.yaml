@@ -1,7 +1,7 @@
 defaults:
   - _self_
-  - augmentations: symmetric.yaml
-  - wandb: private.yaml
+  - augmentations: asymmetric.yaml
+  # - wandb: private.yaml
   - override hydra/hydra_logging: disabled
   - override hydra/job_logging: disabled
 
@@ -11,24 +11,27 @@ hydra:
   run:
     dir: .
 
-name: "simclr-cifar100" # change here for cifar100
-method: "simclr"
+name: "barlow_twins-ta-cifar10-4head-0.5-attndropout" # change here for cifar100
+method: "barlow-ta"
 backbone:
   name: "resnet18"
 method_kwargs:
   proj_hidden_dim: 2048
-  proj_output_dim: 256
-  temperature: 0.2
+  proj_output_dim: 2048
+  scale_loss: 0.1
+  num_heads: 4
+  attn_dropout: 0.5
+  proj_dropout: 0
 data:
-  dataset: cifar100 # change here for cifar100
-  train_path: "/tudelft.net/staff-bulk/ewi/insy/CV-DataSets"
-  val_path: "/tudelft.net/staff-bulk/ewi/insy/CV-DataSets"
+  dataset: cifar10 # change here for cifar100
+  train_path: "./datasets"
+  val_path: "./datasets"
   format: "image_folder"
   num_workers: 4
 optimizer:
   name: "lars"
   batch_size: 256
-  lr: 0.4
+  lr: 0.3
   classifier_lr: 0.1
   weight_decay: 1e-4
   kwargs:

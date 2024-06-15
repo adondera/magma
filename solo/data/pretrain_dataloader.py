@@ -30,6 +30,7 @@ from torch.utils.data import DataLoader
 from torch.utils.data.dataset import Dataset
 from torchvision import transforms
 from torchvision.datasets import STL10, ImageFolder
+from solo.data.ram_dataset import RAMImageFolder
 
 try:
     from solo.data.h5_dataset import H5Dataset
@@ -209,6 +210,8 @@ def build_transform_pipeline(dataset, cfg):
         "stl10": ((0.4914, 0.4823, 0.4466), (0.247, 0.243, 0.261)),
         "imagenet100": (IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD),
         "imagenet": (IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD),
+        "imagenette": (IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD),
+        "tiny-imagenet": ((0.480, 0.448, 0.398), (0.277, 0.269, 0.282)),
     }
 
     mean, std = MEANS_N_STD.get(
@@ -306,7 +309,7 @@ def prepare_datasets(
         transform (Callable): a transformation.
         train_dir (Optional[Union[str, Path]]): training data path. Defaults to None.
         data_format (Optional[str]): format of the data. Defaults to "image_folder".
-            Possible values are "image_folder" and "h5".
+            Possible values are "image_folder", "h5", and "ram_image_folder".
         no_labels (Optional[bool]): if the custom dataset has no labels.
         data_fraction (Optional[float]): percentage of data to use. Use all data when set to -1.0.
             Defaults to -1.0.
@@ -335,10 +338,12 @@ def prepare_datasets(
             transform=transform,
         )
 
-    elif dataset in ["imagenet", "imagenet100"]:
+    elif dataset in ["imagenet", "imagenet100", "imagenette", "tiny-imagenet"]:
         if data_format == "h5":
             assert _h5_available
             train_dataset = dataset_with_index(H5Dataset)(dataset, train_data_path, transform)
+        elif data_format == "ram_image_folder":
+            train_dataset = dataset_with_index(RAMImageFolder)(train_data_path, transform)
         else:
             train_dataset = dataset_with_index(ImageFolder)(train_data_path, transform)
 

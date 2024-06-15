@@ -38,6 +38,13 @@ from solo.methods.vibcreg import VIbCReg
 from solo.methods.vicreg import VICReg
 from solo.methods.wmse import WMSE
 from solo.methods.ta import BYOLWithTA
+from solo.methods.ta_simclr import TA_SimCLR
+from solo.methods.ta_barlow import TA_BarlowTwins
+from solo.methods.mae_regularized import MAE_REG
+from solo.methods.simclr_regularized import SimCLR_REG
+from solo.methods.vicreg_regularized import VICReg_REG
+from solo.methods.dino_regularized import DINO_REG
+from solo.methods.u_mae import U_MAE
 
 METHODS = {
     # base classes
@@ -63,6 +70,13 @@ METHODS = {
     "vicreg": VICReg,
     "wmse": WMSE,
     "byol-ta": BYOLWithTA,
+    "simclr-ta": TA_SimCLR,
+    "barlow-ta": TA_BarlowTwins,
+    "mae-reg": MAE_REG,
+    "u-mae": U_MAE,
+    "simclr-reg": SimCLR_REG,
+    "vicreg-reg": VICReg_REG,
+    "dino-reg": DINO_REG,
 }
 __all__ = [
     "BarlowTwins",
@@ -86,4 +100,10 @@ __all__ = [
     "VICReg",
     "WMSE",
     "BYOLWithTA",
+    "TA_SimCLR",
+    "TA_BarlowTwins",
+    "MAE_REG",
+    "SimCLR_REG",
+    "VICReg_REG",
+    "DINO_REG",
 ]

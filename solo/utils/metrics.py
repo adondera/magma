@@ -18,8 +18,10 @@
 # DEALINGS IN THE SOFTWARE.
 
 from typing import Dict, List, Sequence
-
+from matplotlib import figure
+from matplotlib import colors
 import torch
+import seaborn as sns
 
 
 def accuracy_at_k(
@@ -71,3 +73,41 @@ def weighted_mean(outputs: List[Dict], key: str, batch_size_key: str) -> float:
         n += out[batch_size_key]
     value = value / n
     return value.squeeze(0)
+
+
+def tensor_mean(outputs: List[Dict], key: str, batch_size_key: str) -> torch.Tensor:
+    """
+    Computes the mean tensor of the values of a key. Only tensors of the same batch size are considered.
+
+    Args:
+        outputs (List[Dict]): list of dicts containing the outputs of a validation step.
+        key (str): key of the tensor metric of interest.
+        batch_size_key (str): key of batch size values.
+
+    Returns:
+        torch.Tensor: mean tensor of the values of a key
+    """
+    batch_size = outputs[0][batch_size_key]
+    tensors = torch.stack(
+        [output[key] for output in outputs if output[batch_size_key] == batch_size]
+    )
+    return tensors.mean(dim=0)
+
+
+def get_heatmap(matrix: torch.Tensor, norm: colors.Normalize = None, title: str = "") -> figure.Figure:
+    """
+    Returns a heatmap of the given matrix.
+    
+    Args:
+        matrix (torch.Tensor): matrix to plot.
+        norm (colors.Normalize, optional): normalization to apply to the matrix. Defaults to None.
+        title (str, optional): title of the plot. Defaults to "".
+
+    Returns:
+        figure.Figure: heatmap of the matrix.
+    """
+    fig = figure.Figure()
+    ax = fig.subplots(1)
+    ax.set_title(title)
+    sns.heatmap(matrix.detach().cpu().numpy(), ax=ax, norm=norm)
+    return fig

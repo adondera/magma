@@ -18,12 +18,13 @@
 # DEALINGS IN THE SOFTWARE.
 
 
-from solo.data import classification_dataloader, h5_dataset, pretrain_dataloader
+from solo.data import classification_dataloader, h5_dataset, pretrain_dataloader, ram_dataset
 
 __all__ = [
     "classification_dataloader",
     "h5_dataset",
     "pretrain_dataloader",
+    "ram_dataset",
 ]
 
 

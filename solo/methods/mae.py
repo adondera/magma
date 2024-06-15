@@ -216,7 +216,6 @@ class MAE(BaseMethod):
         # modified base forward
         if not self.no_channel_last:
             X = X.to(memory_format=torch.channels_last)
-
         out = {}
         if self.training:
             feats, patch_feats, mask, ids_restore = self.backbone(X, self.mask_ratio)
@@ -227,6 +226,7 @@ class MAE(BaseMethod):
 
         logits = self.classifier(feats.detach())
         out.update({"logits": logits, "feats": feats})
+
         return out
 
     def training_step(self, batch: Sequence[Any], batch_idx: int) -> torch.Tensor:
@@ -256,7 +256,6 @@ class MAE(BaseMethod):
                 norm_pix_loss=self.norm_pix_loss,
             )
         reconstruction_loss /= self.num_large_crops
-
         metrics = {
             "train_reconstruction_loss": reconstruction_loss,
         }

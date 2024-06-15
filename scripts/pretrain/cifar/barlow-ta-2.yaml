@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - augmentations: symmetric.yaml
+  - augmentations: asymmetric.yaml
   - wandb: private.yaml
   - override hydra/hydra_logging: disabled
   - override hydra/job_logging: disabled
@@ -11,14 +11,17 @@ hydra:
   run:
     dir: .
 
-name: "simclr-cifar100" # change here for cifar100
-method: "simclr"
+name: "barlow_twins-ta-cifar100-adamw-no-residual-4head-0.5-attndropout-noQKVHiddenDim" # change here for cifar100
+method: "barlow-ta"
 backbone:
   name: "resnet18"
 method_kwargs:
   proj_hidden_dim: 2048
-  proj_output_dim: 256
-  temperature: 0.2
+  proj_output_dim: 2048
+  scale_loss: 0.1
+  num_heads: 4
+  attn_dropout: 0.5
+  proj_dropout: 0
 data:
   dataset: cifar100 # change here for cifar100
   train_path: "/tudelft.net/staff-bulk/ewi/insy/CV-DataSets"
@@ -26,23 +29,21 @@ data:
   format: "image_folder"
   num_workers: 4
 optimizer:
-  name: "lars"
+  name: "adamw"
   batch_size: 256
-  lr: 0.4
-  classifier_lr: 0.1
-  weight_decay: 1e-4
+  lr: 1.0e-3
+  classifier_lr: 1.0e-3
+  weight_decay: 0.01
   kwargs:
-    clip_lr: True
-    eta: 0.02
-    exclude_bias_n_norm: True
+    betas: [0.0, 0.999]
 scheduler:
   name: "warmup_cosine"
 checkpoint:
   enabled: True
   dir: "trained_models"
   frequency: 1
-auto_resume:
-  enabled: True
+# auto_resume:
+#   enabled: True
 
 # overwrite PL stuff
 max_epochs: 1000

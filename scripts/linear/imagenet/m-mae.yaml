@@ -1,0 +1,50 @@
+defaults:
+  - _self_
+  - wandb: private.yaml
+  - override hydra/hydra_logging: disabled
+  - override hydra/job_logging: disabled
+
+# disable hydra outputs
+hydra:
+  output_subdir: null
+  run:
+    dir: .
+
+name: "linear-m-mae-imagenet-vit-base"
+# pretrained_feature_extractor: /tudelft.net/staff-umbrella/StudentsCVlab/adondera/trained_models/mae-reg/9snzimg7/mae-regularized-imagenet-vit-base-constant-weight-0-batch-256-knn-continued-from-282-9snzimg7-ep=399.ckpt
+# pretrained_feature_extractor: /tudelft.net/staff-umbrella/StudentsCVlab/adondera/trained_models/mae-reg/q7d49ili/mae-regularized-imagenet-vit-base-constant-weight-0-batch-256-knn-continued-from-110-q7d49ili-ep=140.ckpt
+backbone:
+  name: "vit_base"
+pretrain_method: "mae-reg"
+data:
+  dataset: imagenet
+  train_path: "/tudelft.net/staff-bulk/ewi/insy/CV-DataSets/imagenet/train"
+  val_path: "/tudelft.net/staff-bulk/ewi/insy/CV-DataSets/imagenet/val"
+  format: "dali"
+  num_workers: 16
+optimizer:
+  name: "sgd"
+  batch_size: 256
+  lr: 0.1
+  weight_decay: 0
+scheduler:
+  name: "step"
+  lr_decay_steps: [60, 80]
+checkpoint:
+  enabled: True
+  dir: "/tudelft.net/staff-umbrella/StudentsCVlab/adondera/trained_models"
+  frequency: 1
+# auto_resume:
+#   enabled: True
+
+# finetune: True
+
+# overwrite PL stuff
+max_epochs: 100
+devices: [0, 1, 2, 3]
+sync_batchnorm: True
+accelerator: "gpu"
+strategy: "ddp"
+precision: 16
+check_val_every_n_epoch: 10
+

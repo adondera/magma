@@ -28,7 +28,6 @@ from solo.methods.base import BaseMethod
 from solo.utils.misc import omegaconf_select
 from solo.utils.sinkhorn_knopp import SinkhornKnopp
 
-
 class SwAV(BaseMethod):
     def __init__(self, cfg: omegaconf.DictConfig):
         """Implements SwAV (https://arxiv.org/abs/2006.09882).
@@ -55,6 +54,7 @@ class SwAV(BaseMethod):
         self.queue_size: int = cfg.method_kwargs.queue_size
         self.epoch_queue_starts: int = cfg.method_kwargs.epoch_queue_starts
         self.freeze_prototypes_epochs: int = cfg.method_kwargs.freeze_prototypes_epochs
+        self.regularizer_weight = cfg.method_kwargs.regularizer_weight
 
         proj_hidden_dim: int = cfg.method_kwargs.proj_hidden_dim
         proj_output_dim: int = cfg.method_kwargs.proj_output_dim
@@ -110,7 +110,9 @@ class SwAV(BaseMethod):
             "method_kwargs.epoch_queue_starts",
             15,
         )
-
+        cfg.method_kwargs.regularizer_weight = omegaconf_select(
+            cfg, "method_kwargs.regularizer_weight", 0.0
+        )
         return cfg
 
     @property
@@ -231,7 +233,6 @@ class SwAV(BaseMethod):
             self.queue[:, : z.size(1)] = z.detach()
 
         self.log("train_swav_loss", swav_loss, on_epoch=True, sync_dist=True)
-
         return swav_loss + class_loss
 
     def on_after_backward(self):
