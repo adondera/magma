@@ -33,8 +33,6 @@ def dataset_args(parser: ArgumentParser):
     SUPPORTED_DATASETS = [
         "cifar10",
         "cifar100",
-        "cifar10-c",
-        "cifar100-c",
         "stl10",
         "imagenet",
         "imagenet100",
