@@ -1,6 +1,6 @@
 # MAGMA: Manifold Regularization for MAEs
 
-This repository contains the code for our paper **MAGMA: Manifold Regularization for MAEs**.
+This repository contains the code for our paper **MAGMA: Manifold Regularization for MAEs (Alin Dondera, Anuj Singh, Hadi Jamali-Rad)**.
 
 - **Accepted in WACV 2025**
 
@@ -73,8 +73,19 @@ Attention maps reveal where the model focuses when looking at an image. This fig
 
 ## Citation
 ```(bibtex)
-TODO
+@misc{dondera2024magmamanifoldregularizationmaes,
+      title={MAGMA: Manifold Regularization for MAEs}, 
+      author={Alin Dondera and Anuj Singh and Hadi Jamali-Rad},
+      year={2024},
+      eprint={2412.02871},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2412.02871}, 
+}
 ```
+
+## Contact
+Corresponding author: Alin Dondera (dondera.alin@gmail.com)
 
 ## Acknowledgements
 This codebase builds upon the excellent work of the solo-learn repository. We thank the authors for their valuable contribution to the self-supervised learning community.
